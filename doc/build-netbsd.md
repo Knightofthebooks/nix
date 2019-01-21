@@ -24,7 +24,7 @@ python37
 
 Download the source code:
 ```
-git clone https://github.com/nixplatform/nixcore
+git clone https://github.com/nixplatform/nixcore.git
 ```
 
 See [dependencies.md](dependencies.md) for a complete overview.

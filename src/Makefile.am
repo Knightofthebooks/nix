@@ -115,8 +115,11 @@ if BUILD_NIXD
   bin_PROGRAMS += nixd
 endif
 
-if BUILD_NIX_UTILS
-  bin_PROGRAMS += nix-cli nix-tx
+if BUILD_BITCOIN_CLI
+  bin_PROGRAMS += nix-cli
+endif
+if BUILD_BITCOIN_TX
+  bin_PROGRAMS += nix-tx
 endif
 
 .PHONY: FORCE check-symbols check-security
@@ -126,10 +129,12 @@ NIX_CORE_H = \
   addressindex.h \
   spentindex.h \
   addrman.h \
+  attributes.h \
   base58.h \
   bech32.h \
   bloom.h \
   blockencodings.h \
+  blockfilter.h \
   chain.h \
   chainparams.h \
   chainparamsbase.h \
@@ -168,6 +173,7 @@ NIX_CORE_H = \
   index/txindex.h \
   indirectmap.h \
   init.h \
+  interfaces/chain.h \
   interfaces/handler.h \
   interfaces/node.h \
   interfaces/wallet.h \
@@ -241,15 +247,16 @@ NIX_CORE_H = \
   txmempool.h \
   ui_interface.h \
   undo.h \
-  unilib/uninorms.h \
-  unilib/utf8.h \
-  util.h \
-  utilmemory.h \
-  utilmoneystr.h \
-  utiltime.h \
+  util/bytevectorhash.h \
+  util/system.h \
+  util/memory.h \
+  util/moneystr.h \
+  util/time.h \
   validation.h \
   validationinterface.h \
   versionbits.h \
+  versionbitsinfo.h \
+  walletinitinterface.h \
   wallet/coincontrol.h \
   wallet/crypter.h \
   wallet/db.h \
@@ -285,6 +292,7 @@ libnix_server_a_SOURCES = \
   addrman.cpp \
   bloom.cpp \
   blockencodings.cpp \
+  blockfilter.cpp \
   chain.cpp \
   checkpoints.cpp \
   consensus/tx_verify.cpp \
@@ -292,6 +300,9 @@ libnix_server_a_SOURCES = \
   httpserver.cpp \
   index/base.cpp \
   index/txindex.cpp \
+  interfaces/chain.cpp \
+  interfaces/handler.cpp \
+  interfaces/node.cpp \
   init.cpp \
   dbwrapper.cpp \
   ghostnode/rpcghostnode.cpp \
@@ -329,6 +340,10 @@ libnix_server_a_SOURCES = \
   versionbits.cpp \
   zerocoin/zerocoin.cpp \
   $(NIX_CORE_H)
+
+if !ENABLE_WALLET
+libbitcoin_server_a_SOURCES += dummywallet.cpp
+endif
 
 if ENABLE_ZMQ
 libnix_zmq_a_CPPFLAGS = $(NIX_INCLUDES) $(ZMQ_CFLAGS)
@@ -428,7 +443,9 @@ crypto_libnix_crypto_base_a_SOURCES = \
   crypto/Lyra2RE/sph_groestl.h \
   crypto/Lyra2RE/sph_keccak.h \
   crypto/Lyra2RE/sph_skein.h \
-  crypto/Lyra2RE/sph_types.h
+  crypto/Lyra2RE/sph_types.h \
+	crypto/siphash.cpp \
+	crypto/siphash.h
 
 if USE_ASM
 crypto_libnix_crypto_base_a_SOURCES += crypto/sha256_sse4.cpp
@@ -486,8 +503,8 @@ libnix_consensus_a_SOURCES = \
   tinyformat.h \
   uint256.cpp \
   uint256.h \
-  utilstrencodings.cpp \
-  utilstrencodings.h \
+  util/strencodings.cpp \
+  util/strencodings.h \
   version.h
 
 # common: shared between nixd, and nix-qt and non-server tools
@@ -522,6 +539,7 @@ libnix_common_a_SOURCES = \
   ghost-address/mnemonic.cpp \
   ghost-address/stealth.cpp \
   ghost-address/xxhash.c \
+	versionbitsinfo.cpp \
   warnings.cpp \
   $(NIX_CORE_H)
 
@@ -560,20 +578,18 @@ libnix_util_a_SOURCES = \
   libzerocoin/SpendMetaData.cpp \
   libzerocoin/Zerocoin.h \
   fs.cpp \
-  interfaces/handler.cpp \
-  interfaces/node.cpp \
   logging.cpp \
   random.cpp \
   rpc/protocol.cpp \
   support/cleanse.cpp \
   sync.cpp \
   threadinterrupt.cpp \
-  util.cpp \
-  utilmoneystr.cpp \
-  utilstrencodings.cpp \
-  utiltime.cpp \
+  util/bytevectorhash.cpp \
+  util/system.cpp \
+  util/moneystr.cpp \
+  util/strencodings.cpp \
+  util/time.cpp \
   $(NIX_CORE_H)
-
 
 if GLIBC_BACK_COMPAT
 libnix_util_a_SOURCES += compat/glibc_compat.cpp
@@ -601,6 +617,8 @@ nixd_SOURCES += nixd-res.rc
 endif
 
 nixd_LDADD = \
+  $(LIBNIX_SERVER) \
+  $(LIBNIX_WALLET) \
   $(LIBNIX_SERVER) \
   $(LIBNIX_COMMON) \
   $(LIBUNIVALUE) \
@@ -732,9 +750,11 @@ if HARDEN
 	$(AM_V_at) READELF=$(READELF) OBJDUMP=$(OBJDUMP) $(top_srcdir)/contrib/devtools/security-check.py < $(bin_PROGRAMS)
 endif
 
+if ENABLE_BIP70
 %.pb.cc %.pb.h: %.proto
 	@test -f $(PROTOC)
 	$(AM_V_GEN) $(PROTOC) --cpp_out=$(@D) --proto_path=$(<D) $<
+endif
 
 if EMBEDDED_LEVELDB
 include Makefile.leveldb.include

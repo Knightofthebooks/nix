@@ -5,7 +5,7 @@
 #include <qt/overviewpage.h>
 #include <qt/forms/ui_overviewpage.h>
 
-#include <qt/nixunits.h>
+#include <qt/bitcoinunits.h>
 #include <qt/clientmodel.h>
 #include <qt/guiconstants.h>
 #include <qt/guiutil.h>
@@ -14,10 +14,6 @@
 #include <qt/transactionfilterproxy.h>
 #include <qt/transactiontablemodel.h>
 #include <qt/walletmodel.h>
-#include <qt/ghostvault.h>
-#include <../../wallet/wallet.h>
-#include "util.h"
-#include <timedata.h>
 
 #include <QAbstractItemDelegate>
 #include <QPainter>
@@ -117,24 +113,14 @@ public:
 OverviewPage::OverviewPage(const PlatformStyle *platformStyle, QWidget *parent) :
     QWidget(parent),
     ui(new Ui::OverviewPage),
-    clientModel(0),
-    walletModel(0),
+    clientModel(nullptr),
+    walletModel(nullptr),
     txdelegate(new TxViewDelegate(platformStyle, this))
 {
     ui->setupUi(this);
 
-    // read config
-    boost::filesystem::path pathTorSetting = GetDataDir()/"nixtorsetting.dat";
-    std::pair<bool,std::string> torEnabled = ReadBinaryFileTor(pathTorSetting.string().c_str());
-    if(torEnabled.first){
-        if(torEnabled.second == "enabled"){
-            ui->checkboxEnabledTor->setChecked(true);
-        }else{
-            ui->checkboxEnabledTor->setChecked(false);
-        }
-    }
-
     m_balances.balance = -1;
+
     // use a SingleColorIcon for the "out of sync warning" icon
     QIcon icon = platformStyle->SingleColorIcon(":/icons/warning");
     icon.addPixmap(icon.pixmap(QSize(64,64), QIcon::Normal), QIcon::Disabled); // also set the disabled icon because we are using a disabled QPushButton to work around missing HiDPI support of QLabel (https://bugreports.qt.io/browse/QTBUG-42503)
@@ -147,17 +133,12 @@ OverviewPage::OverviewPage(const PlatformStyle *platformStyle, QWidget *parent) 
     ui->listTransactions->setMinimumHeight(NUM_ITEMS * (DECORATION_SIZE + 2));
     ui->listTransactions->setAttribute(Qt::WA_MacShowFocusRect, false);
 
-    connect(ui->listTransactions, SIGNAL(clicked(QModelIndex)), this, SLOT(handleTransactionClicked(QModelIndex)));
+    connect(ui->listTransactions, &QListView::clicked, this, &OverviewPage::handleTransactionClicked);
 
     // start with displaying the "out of sync" warnings
     showOutOfSyncWarning(true);
-    connect(ui->labelWalletStatus, SIGNAL(clicked()), this, SLOT(handleOutOfSyncWarningClicks()));
-    connect(ui->labelTransactionsStatus, SIGNAL(clicked()), this, SLOT(handleOutOfSyncWarningClicks()));
-
-    //set up TOR network connection
-    connect(ui->checkboxEnabledTor, SIGNAL(toggled(bool)), this, SLOT(handleEnabledTorChanged()));
-
-    isStaking = ui->isStakingLabel;
+    connect(ui->labelWalletStatus, &QPushButton::clicked, this, &OverviewPage::handleOutOfSyncWarningClicks);
+    connect(ui->labelTransactionsStatus, &QPushButton::clicked, this, &OverviewPage::handleOutOfSyncWarningClicks);
 }
 
 void OverviewPage::handleTransactionClicked(const QModelIndex &index)
@@ -180,41 +161,30 @@ void OverviewPage::setBalance(const interfaces::WalletBalances& balances)
 {
     int unit = walletModel->getOptionsModel()->getDisplayUnit();
     m_balances = balances;
-    ui->labelBalance->setText(BitcoinUnits::formatWithUnit(unit, balances.balance, false, BitcoinUnits::separatorAlways));
-    ui->labelUnconfirmed->setText(BitcoinUnits::formatWithUnit(unit, balances.unconfirmed_balance, false, BitcoinUnits::separatorAlways));
-    ui->labelImmature->setText(BitcoinUnits::formatWithUnit(unit, balances.immature_balance, false, BitcoinUnits::separatorAlways));
-    ui->labelWatchAvailable->setText(BitcoinUnits::formatWithUnit(unit, balances.watch_only_balance, false, BitcoinUnits::separatorAlways));
-    ui->labelWatchPending->setText(BitcoinUnits::formatWithUnit(unit, balances.unconfirmed_watch_only_balance, false, BitcoinUnits::separatorAlways));
-    ui->labelWatchImmature->setText(BitcoinUnits::formatWithUnit(unit, balances.immature_watch_only_balance, false, BitcoinUnits::separatorAlways));
-    ui->labelWatchTotal->setText(BitcoinUnits::formatWithUnit(unit, balances.watch_only_balance + balances.unconfirmed_watch_only_balance + balances.immature_watch_only_balance, false, BitcoinUnits::separatorAlways));
-
-    ui->labelGhost->setText(BitcoinUnits::formatWithUnit(unit, balances.ghostBalance, false, BitcoinUnits::separatorAlways));
-    ui->labelGhostUnconfirmed->setText(BitcoinUnits::formatWithUnit(unit, balances.ghostBalanceUnconfirmed, false, BitcoinUnits::separatorAlways));
-    ui->labelStaked->setText(BitcoinUnits::formatWithUnit(unit, balances.staked, false, BitcoinUnits::separatorAlways));
-    ui->labelWatchStaked->setText(BitcoinUnits::formatWithUnit(unit, balances.watchStakedBalance, false, BitcoinUnits::separatorAlways));
-
-    ui->labelTotal->setText(BitcoinUnits::formatWithUnit(unit, balances.balance + balances.unconfirmed_balance + balances.immature_balance + balances.ghostBalance, false, BitcoinUnits::separatorAlways));
-
+    if (walletModel->privateKeysDisabled()) {
+        ui->labelBalance->setText(BitcoinUnits::formatWithUnit(unit, balances.watch_only_balance, false, BitcoinUnits::separatorAlways));
+        ui->labelUnconfirmed->setText(BitcoinUnits::formatWithUnit(unit, balances.unconfirmed_watch_only_balance, false, BitcoinUnits::separatorAlways));
+        ui->labelImmature->setText(BitcoinUnits::formatWithUnit(unit, balances.immature_watch_only_balance, false, BitcoinUnits::separatorAlways));
+        ui->labelTotal->setText(BitcoinUnits::formatWithUnit(unit, balances.watch_only_balance + balances.unconfirmed_watch_only_balance + balances.immature_watch_only_balance, false, BitcoinUnits::separatorAlways));
+    } else {
+        ui->labelBalance->setText(BitcoinUnits::formatWithUnit(unit, balances.balance, false, BitcoinUnits::separatorAlways));
+        ui->labelUnconfirmed->setText(BitcoinUnits::formatWithUnit(unit, balances.unconfirmed_balance, false, BitcoinUnits::separatorAlways));
+        ui->labelImmature->setText(BitcoinUnits::formatWithUnit(unit, balances.immature_balance, false, BitcoinUnits::separatorAlways));
+        ui->labelTotal->setText(BitcoinUnits::formatWithUnit(unit, balances.balance + balances.unconfirmed_balance + balances.immature_balance, false, BitcoinUnits::separatorAlways));
+        ui->labelWatchAvailable->setText(BitcoinUnits::formatWithUnit(unit, balances.watch_only_balance, false, BitcoinUnits::separatorAlways));
+        ui->labelWatchPending->setText(BitcoinUnits::formatWithUnit(unit, balances.unconfirmed_watch_only_balance, false, BitcoinUnits::separatorAlways));
+        ui->labelWatchImmature->setText(BitcoinUnits::formatWithUnit(unit, balances.immature_watch_only_balance, false, BitcoinUnits::separatorAlways));
+        ui->labelWatchTotal->setText(BitcoinUnits::formatWithUnit(unit, balances.watch_only_balance + balances.unconfirmed_watch_only_balance + balances.immature_watch_only_balance, false, BitcoinUnits::separatorAlways));
+    }
     // only show immature (newly mined) balance if it's non-zero, so as not to complicate things
     // for the non-mining users
     bool showImmature = balances.immature_balance != 0;
     bool showWatchOnlyImmature = balances.immature_watch_only_balance != 0;
-    bool showGhost = balances.ghostBalance != 0;
-    bool showGhostUnconfirmed = balances.ghostBalanceUnconfirmed != 0;
 
     // for symmetry reasons also show immature label when the watch-only one is shown
     ui->labelImmature->setVisible(showImmature || showWatchOnlyImmature);
-    ui->labelGhost->setVisible(showGhost);
-    ui->labelGhostText->setVisible(showGhost);
-    ui->labelWatchGhost->setVisible(false);
-    ui->labelGhostUnconfirmed->setVisible(showGhostUnconfirmed);
-    ui->labelGhostUnconfirmedText->setVisible(showGhostUnconfirmed);
-    ui->labelWatchGhostUnconfirmed->setVisible(false);
     ui->labelImmatureText->setVisible(showImmature || showWatchOnlyImmature);
-    ui->labelWatchImmature->setVisible(showWatchOnlyImmature); // show watch-only immature balance
-
-    ghostVaultPage->setVaultBalance(ghostBalance, ghostBalanceUnconfirmed);
-    ghostVaultPage->setKeyList();
+    ui->labelWatchImmature->setVisible(!walletModel->privateKeysDisabled() && showWatchOnlyImmature); // show watch-only immature balance
 }
 
 // show/hide watch-only labels
@@ -226,8 +196,6 @@ void OverviewPage::updateWatchOnlyLabels(bool showWatchOnly)
     ui->labelWatchAvailable->setVisible(showWatchOnly); // show watch-only available balance
     ui->labelWatchPending->setVisible(showWatchOnly);   // show watch-only pending balance
     ui->labelWatchTotal->setVisible(showWatchOnly);     // show watch-only total balance
-    ui->labelWatchStaked->setVisible(showWatchOnly);    // show watch-only staked balance
-
 
     if (!showWatchOnly)
         ui->labelWatchImmature->hide();
@@ -239,7 +207,7 @@ void OverviewPage::setClientModel(ClientModel *model)
     if(model)
     {
         // Show warning if this is a prerelease version
-        connect(model, SIGNAL(alertsChanged(QString)), this, SLOT(updateAlerts(QString)));
+        connect(model, &ClientModel::alertsChanged, this, &OverviewPage::updateAlerts);
         updateAlerts(model->getStatusBarWarnings());
     }
 }
@@ -265,47 +233,19 @@ void OverviewPage::setWalletModel(WalletModel *model)
         interfaces::Wallet& wallet = model->wallet();
         interfaces::WalletBalances balances = wallet.getBalances();
         setBalance(balances);
-        connect(model, SIGNAL(balanceChanged(interfaces::WalletBalances)), this, SLOT(setBalance(interfaces::WalletBalances)));
+        connect(model, &WalletModel::balanceChanged, this, &OverviewPage::setBalance);
 
-        connect(model->getOptionsModel(), SIGNAL(displayUnitChanged(int)), this, SLOT(updateDisplayUnit()));
+        connect(model->getOptionsModel(), &OptionsModel::displayUnitChanged, this, &OverviewPage::updateDisplayUnit);
 
-        updateWatchOnlyLabels(wallet.haveWatchOnly());
-        connect(model, SIGNAL(notifyWatchonlyChanged(bool)), this, SLOT(updateWatchOnlyLabels(bool)));
-
-        if(chainActive.Height() + 1 >= Params().GetConsensus().nPosHeightActivate){
-            if(walletModel->getWallet()->fUnlockForStakingOnly){
-                ui->isStakingLabel->setStyleSheet("color: green;");
-                ui->isStakingLabel->setText("Enabled");
-            }
-            else{
-                ui->isStakingLabel->setStyleSheet("color: red;");
-                ui->isStakingLabel->setText("Disabled");
-            }
-        }
-        else{
-            ui->isStakingLabel->setStyleSheet("color: red;");
-            ui->isStakingLabel->setText("Disabled");
-        }
-
-
+        updateWatchOnlyLabels(wallet.haveWatchOnly() && !model->privateKeysDisabled());
+        connect(model, &WalletModel::notifyWatchonlyChanged, [this](bool showWatchOnly) {
+            updateWatchOnlyLabels(showWatchOnly && !walletModel->privateKeysDisabled());
+        });
     }
 
     // update the display unit, to not use the default ("BTC")
     updateDisplayUnit();
 }
-
-void OverviewPage::setReservedBalance(CAmount reservedBalance)
-{
-    if (!walletModel || !walletModel->getOptionsModel())
-        return;
-
-    int unit = walletModel->getOptionsModel()->getDisplayUnit();
-    reservedBalance = walletModel->getReservedBalance();
-    currentReservedBalance = reservedBalance;
-    ui->labelReservedText->setVisible(reservedBalance);
-    ui->labelReserved->setVisible(reservedBalance);
-    ui->labelReserved->setText(BitcoinUnits::formatWithUnit(unit, reservedBalance, false, BitcoinUnits::separatorAlways));
-};
 
 void OverviewPage::updateDisplayUnit()
 {
@@ -332,24 +272,4 @@ void OverviewPage::showOutOfSyncWarning(bool fShow)
 {
     ui->labelWalletStatus->setVisible(fShow);
     ui->labelTransactionsStatus->setVisible(fShow);
-}
-
-void OverviewPage::handleEnabledTorChanged(){
-
-    QMessageBox msgBox;
-    boost::filesystem::path pathTorSetting = GetDataDir()/"nixtorsetting.dat";
-    if(ui->checkboxEnabledTor->isChecked()){
-        if (WriteBinaryFileTor(pathTorSetting.string().c_str(), "enabled")) {
-            msgBox.setText("Please restart the NIX Core wallet to route your connection to obfuscate your IP address. \nSyncing your wallet might be slower.");
-        }else{
-            msgBox.setText("Obfuscation cannot enable");
-        }
-    }else{
-        if (WriteBinaryFileTor(pathTorSetting.string().c_str(), "disabled")) {
-            msgBox.setText("Please restart the NIX Core wallet to disable IP obfuscation.");
-        } else {
-            msgBox.setText("Obfuscation cannot disable");
-        }
-    }
-    msgBox.exec();
 }

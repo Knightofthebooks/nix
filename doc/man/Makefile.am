@@ -8,6 +8,10 @@ if ENABLE_QT
   dist_man1_MANS+=nix-qt.1
 endif
 
-if BUILD_NIX_UTILS
-  dist_man1_MANS+=nix-cli.1 nix-tx.1
+if BUILD_NIX_CLI
+  dist_man1_MANS+=nix-cli.1
+endif
+
+if BUILD_NIX_TX
+  dist_man1_MANS+=nix-tx.1
 endif

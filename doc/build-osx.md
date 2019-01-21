@@ -20,7 +20,7 @@ Dependencies
 
 See [dependencies.md](dependencies.md) for a complete overview.
 
-If you want to build the disk image with `make deploy` (.dmg / optional), you need RSVG
+If you want to build the disk image with `make deploy` (.dmg / optional), you need RSVG:
 
     brew install librsvg
 
@@ -28,7 +28,7 @@ Berkeley DB
 -----------
 It is recommended to use Berkeley DB 4.8. If you have to build it yourself,
 you can use [the installation script included in contrib/](/contrib/install_db4.sh)
-like so
+like so:
 
 ```shell
 ./contrib/install_db4.sh .
@@ -36,7 +36,7 @@ like so
 
 from the root of the repository.
 
-**Note**: You only need Berkeley DB if the wallet is enabled (see the section *Disable-Wallet mode* below).
+**Note**: You only need Berkeley DB if the wallet is enabled (see [*Disable-wallet mode*](/doc/build-osx.md#disable-wallet-mode)).
 
 Build NIX Core
 ------------------------
@@ -64,14 +64,25 @@ Build NIX Core
 
         make deploy
 
+Disable-wallet mode
+--------------------
+When the intention is to run only a P2P node without a wallet, Bitcoin Core may be compiled in
+disable-wallet mode with:
+
+    ./configure --disable-wallet
+
+In this case there is no dependency on Berkeley DB 4.8.
+
+Mining is also possible in disable-wallet mode using the `getblocktemplate` RPC call.
+
 Running
 -------
 
 NIX Core is now available at `./src/nixd`
 
-Before running, it's recommended that you create an RPC configuration file.
+Before running, you may create an empty configuration file:
 
-    echo -e "rpcuser=nixrpc\nrpcpassword=$(xxd -l 16 -p /dev/urandom)" > "/Users/${USER}/Library/Application Support/NIX/nix.conf"
+    touch "/Users/${USER}/Library/Application Support/nix/nix.conf"
 
     chmod 600 "/Users/${USER}/Library/Application Support/NIX/nix.conf"
 

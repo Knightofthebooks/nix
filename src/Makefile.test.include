@@ -9,12 +9,14 @@ TEST_BINARY=test/test_nix$(EXEEXT)
 
 JSON_TEST_FILES = \
   test/data/script_tests.json \
-  test/data/base58_keys_valid.json \
   test/data/base58_encode_decode.json \
-  test/data/base58_keys_invalid.json \
+  test/data/blockfilters.json \
+  test/data/key_io_valid.json \
+  test/data/key_io_invalid.json \
+  test/data/script_tests.json \
+  test/data/sighash.json \
   test/data/tx_invalid.json \
-  test/data/tx_valid.json \
-  test/data/sighash.json
+  test/data/tx_valid.json
 
 RAW_TEST_FILES =
 
@@ -39,6 +41,7 @@ NIX_TESTS =\
   test/bip32_tests.cpp \
   test/blockchain_tests.cpp \
   test/blockencodings_tests.cpp \
+  test/blockfilter_tests.cpp \
   test/bloom_tests.cpp \
   test/bswap_tests.cpp \
   test/checkqueue_tests.cpp \
@@ -48,8 +51,10 @@ NIX_TESTS =\
   test/cuckoocache_tests.cpp \
   test/denialofservice_tests.cpp \
   test/descriptor_tests.cpp \
+  test/fs_tests.cpp \
   test/getarg_tests.cpp \
   test/hash_tests.cpp \
+  test/key_io_tests.cpp \
   test/key_tests.cpp \
   test/limitedmap_tests.cpp \
   test/dbwrapper_tests.cpp \
@@ -80,6 +85,7 @@ NIX_TESTS =\
   test/sigopcount_tests.cpp \
   test/skiplist_tests.cpp \
   test/streams_tests.cpp \
+  test/sync_tests.cpp \
   test/timedata_tests.cpp \
   test/torcontrol_tests.cpp \
   test/transaction_tests.cpp \
@@ -91,17 +97,28 @@ NIX_TESTS =\
   test/validation_block_tests.cpp \
   test/versionbits_tests.cpp
 
+if ENABLE_PROPERTY_TESTS
+NIX_TESTS += \
+  test/key_properties.cpp
+
+NIX_TEST_SUITE += \
+  test/gen/crypto_gen.cpp \
+  test/gen/crypto_gen.h
+endif
+
 if ENABLE_WALLET
 NIX_TESTS += \
-  wallet/test/accounting_tests.cpp \
   wallet/test/psbt_wallet_tests.cpp \
   wallet/test/wallet_tests.cpp \
   wallet/test/wallet_crypto_tests.cpp \
-  wallet/test/coinselector_tests.cpp
+  wallet/test/coinselector_tests.cpp \
+  wallet/test/init_tests.cpp
 
 NIX_TEST_SUITE += \
   wallet/test/wallet_test_fixture.cpp \
-  wallet/test/wallet_test_fixture.h
+  wallet/test/wallet_test_fixture.h \
+  wallet/test/init_test_fixture.cpp \
+  wallet/test/init_test_fixture.h
 endif
 
 test_test_nix_SOURCES = $(NIX_TEST_SUITE) $(NIX_TESTS) $(JSON_TEST_FILES) $(RAW_TEST_FILES)
@@ -115,7 +132,7 @@ test_test_nix_LDADD += $(LIBNIX_SERVER) $(LIBNIX_CLI) $(LIBNIX_COMMON) $(LIBNIX_
   $(LIBLEVELDB) $(LIBLEVELDB_SSE42) $(LIBMEMENV) $(BOOST_LIBS) $(BOOST_UNIT_TEST_FRAMEWORK_LIB) $(LIBSECP256K1) $(EVENT_LIBS) $(EVENT_PTHREADS_LIBS)
 test_test_nix_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
 
-test_test_nix_LDADD += $(LIBNIX_CONSENSUS) $(BDB_LIBS) $(SSL_LIBS) $(CRYPTO_LIBS) $(MINIUPNPC_LIBS)
+test_test_nix_LDADD += $(BDB_LIBS) $(CRYPTO_LIBS) $(MINIUPNPC_LIBS) $(RAPIDCHECK_LIBS)
 test_test_nix_LDFLAGS = $(RELDFLAGS) $(AM_LDFLAGS) $(LIBTOOL_APP_LDFLAGS) -static
 
 if ENABLE_ZMQ
@@ -148,11 +165,19 @@ nodist_test_test_nix_SOURCES = $(GENERATED_TEST_FILES)
 
 $(NIX_TESTS): $(GENERATED_TEST_FILES)
 
-CLEAN_NIX_TEST = test/*.gcda test/*.gcno $(GENERATED_TEST_FILES)
+CLEAN_NIX_TEST = test/*.gcda test/*.gcno $(GENERATED_TEST_FILES) $(NIX_TESTS:=.log)
 
 CLEANFILES += $(CLEAN_NIX_TEST)
 
+if TARGET_WINDOWS
 nix_test: $(TEST_BINARY)
+else
+if ENABLE_BENCH
+nix_test: $(TEST_BINARY) $(BENCH_BINARY)
+else
+nix_test: $(TEST_BINARY)
+endif
+endif
 
 nix_test_check: $(TEST_BINARY) FORCE
 	$(MAKE) check-TESTS TESTS=$^
@@ -161,10 +186,19 @@ nix_test_clean : FORCE
 	rm -f $(CLEAN_NIX_TEST) $(test_test_nix_OBJECTS) $(TEST_BINARY)
 
 check-local: $(NIX_TESTS:.cpp=.cpp.test)
+if BUILD_NIX_TX
 	@echo "Running test/util/nix-util-test.py..."
 	$(PYTHON) $(top_builddir)/test/util/nix-util-test.py
+endif
 	@echo "Running test/util/rpcauth-test.py..."
 	$(PYTHON) $(top_builddir)/test/util/rpcauth-test.py
+if TARGET_WINDOWS
+else
+if ENABLE_BENCH
+	@echo "Running bench/bench_nix -evals=1 -scaling=0..."
+	$(BENCH_BINARY) -evals=1 -scaling=0 > /dev/null
+endif
+endif
 	$(AM_V_at)$(MAKE) $(AM_MAKEFLAGS) -C secp256k1 check
 if EMBEDDED_UNIVALUE
 	$(AM_V_at)$(MAKE) $(AM_MAKEFLAGS) -C univalue check

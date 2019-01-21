@@ -5,7 +5,7 @@
 
 #include <rpc/client.h>
 #include <rpc/protocol.h>
-#include <util.h>
+#include <util/system.h>
 
 #include <set>
 #include <stdint.h>
@@ -18,6 +18,7 @@ public:
     std::string paramName;  //!< parameter name
 };
 
+// clang-format off
 /**
  * Specify a (method, idx, name) here if the argument is a non-string RPC
  * argument and needs to be converted from JSON.
@@ -40,13 +41,13 @@ static const CRPCConvertParam vRPCConvertParams[] =
     { "settxfee", 0, "amount" },
     { "sethdseed", 0, "newkeypool" },
     { "getreceivedbyaddress", 1, "minconf" },
-    { "getreceivedbyaccount", 1, "minconf" },
+    { "getreceivedbylabel", 1, "minconf" },
     { "listreceivedbyaddress", 0, "minconf" },
     { "listreceivedbyaddress", 1, "include_empty" },
     { "listreceivedbyaddress", 2, "include_watchonly" },
-    { "listreceivedbyaccount", 0, "minconf" },
-    { "listreceivedbyaccount", 1, "include_empty" },
-    { "listreceivedbyaccount", 2, "include_watchonly" },
+    { "listreceivedbylabel", 0, "minconf" },
+    { "listreceivedbylabel", 1, "include_empty" },
+    { "listreceivedbylabel", 2, "include_watchonly" },
     { "getbalance", 1, "minconf" },
     { "getbalance", 2, "include_watchonly" },
     { "getblockhash", 0, "height" },
@@ -54,17 +55,10 @@ static const CRPCConvertParam vRPCConvertParams[] =
     { "waitforblockheight", 1, "timeout" },
     { "waitforblock", 1, "timeout" },
     { "waitfornewblock", 0, "timeout" },
-    { "move", 2, "amount" },
-    { "move", 3, "minconf" },
-    { "sendfrom", 2, "amount" },
-    { "sendfrom", 3, "minconf" },
     { "listtransactions", 1, "count" },
     { "listtransactions", 2, "skip" },
     { "listtransactions", 3, "include_watchonly" },
-    { "listaccounts", 0, "minconf" },
-    { "listaccounts", 1, "include_watchonly" },
     { "walletpassphrase", 1, "timeout" },
-    { "walletpassphrase", 2, "stakingonly" },
     { "getblocktemplate", 0, "template_request" },
     { "listsinceblock", 1, "target_confirmations" },
     { "listsinceblock", 2, "include_watchonly" },
@@ -97,6 +91,9 @@ static const CRPCConvertParam vRPCConvertParams[] =
     { "decoderawtransaction", 1, "iswitness" },
     { "signrawtransaction", 1, "prevtxs" },
     { "signrawtransaction", 2, "privkeys" },
+    { "signrawtransactionwithkey", 1, "privkeys" },
+    { "signrawtransactionwithkey", 2, "prevtxs" },
+    { "signrawtransactionwithwallet", 1, "prevtxs" },
     { "sendrawtransaction", 1, "allowhighfees" },
     { "testmempoolaccept", 0, "rawtxs" },
     { "testmempoolaccept", 1, "allowhighfees" },
@@ -136,7 +133,6 @@ static const CRPCConvertParam vRPCConvertParams[] =
     { "pruneblockchain", 0, "height" },
     { "keypoolrefill", 0, "newsize" },
     { "getrawmempool", 0, "verbose" },
-    { "estimatefee", 0, "nblocks" },
     { "estimatesmartfee", 0, "conf_target" },
     { "estimaterawfee", 0, "conf_target" },
     { "estimaterawfee", 1, "threshold" },
@@ -147,21 +143,10 @@ static const CRPCConvertParam vRPCConvertParams[] =
     { "setnetworkactive", 0, "state" },
     { "getmempoolancestors", 1, "verbose" },
     { "getmempooldescendants", 1, "verbose" },
-    //insight
-    { "getblockhashes", 0 },
-    { "getblockhashes", 1 },
-    { "getspentinfo", 0},
-    { "getaddresstxids", 0},
-    { "getaddressbalance", 0},
-    { "getaddressdeltas", 0},
-    { "getaddressutxos", 0},
-    { "getaddressmempool", 0},
-    //
     { "bumpfee", 1, "options" },
     { "logging", 0, "include" },
     { "logging", 1, "exclude" },
     { "disconnectnode", 1, "nodeid" },
-    { "addwitnessaddress", 1, "p2sh" },
     // Echo with conversion (For testing only)
     { "echojson", 0, "arg0" },
     { "echojson", 1, "arg1" },
@@ -175,39 +160,11 @@ static const CRPCConvertParam vRPCConvertParams[] =
     { "echojson", 9, "arg9" },
     { "rescanblockchain", 0, "start_height"},
     { "rescanblockchain", 1, "stop_height"},
-    { "getfeeforamount", 0, "amount" },
     { "createwallet", 1, "disable_private_keys"},
-    //NIX Privacy functions
-    { "setmininput", 0 , "amount"},
-    { "ghostamount", 0 , "amount"},
-    { "unghostamount", 0 , "amount"},
-    { "setgenerate", 0 , "bool"},
-    { "setgenerate", 1 , "bool"},
-    { "setghostednixstatus", 2 ,""},
-    { "setghostednixstatus", 1 ,""},
-    { "listunspentghostednix", 0 ,""},
-    { "listpubcoins", 0, ""},
-    { "getnewstealthaddress", 1 ,"label"},
-    { "importstealthaddress", 0 ,"scan_secret"},
-    { "liststealthaddresses", 0, "show_secrets"},
-
-    //NIX Staking functions
-    { "walletsettings", 1, "json" },
-    { "reservebalance", 0, "enabled" },
-
-    { "delegatestaking", 1, "amount" },
-    { "delegatestaking", 2, "fee percent" },
-    { "delegatestaking", 6, "subtractfeefromamount" },
-    { "delegatestaking", 7 , "replaceable" },
-    { "delegatestaking", 8 , "conf_target" },
-
-    {"payunloadedpubcoins", 0, "amount"},
-    {"refillghostkeys", 0, "amount"},
-    {"listghostednix", 0, "all"},
-    {"listallserials", 0, "height"},
-
-
+    { "getnodeaddresses", 0, "count"},
+    { "stop", 0, "wait" },
 };
+// clang-format on
 
 class CRPCConvertTable
 {

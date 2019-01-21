@@ -9,7 +9,7 @@
 
 #include <qt/addressbookpage.h>
 #include <qt/addresstablemodel.h>
-#include <qt/nixunits.h>
+#include <qt/bitcoinunits.h>
 #include <qt/optionsmodel.h>
 #include <qt/platformstyle.h>
 #include <qt/receiverequestdialog.h>
@@ -25,8 +25,8 @@
 ReceiveCoinsDialog::ReceiveCoinsDialog(const PlatformStyle *_platformStyle, QWidget *parent) :
     QDialog(parent),
     ui(new Ui::ReceiveCoinsDialog),
-    columnResizingFixer(0),
-    model(0),
+    columnResizingFixer(nullptr),
+    model(nullptr),
     platformStyle(_platformStyle)
 {
     ui->setupUi(this);
@@ -49,27 +49,21 @@ ReceiveCoinsDialog::ReceiveCoinsDialog(const PlatformStyle *_platformStyle, QWid
     QAction *copyMessageAction = new QAction(tr("Copy message"), this);
     QAction *copyAmountAction = new QAction(tr("Copy amount"), this);
 
-    QAction *paperWalletAction = new QAction(tr("Get Paper Wallet"), this);
-
-
     // context menu
     contextMenu = new QMenu(this);
     contextMenu->addAction(copyURIAction);
     contextMenu->addAction(copyLabelAction);
     contextMenu->addAction(copyMessageAction);
     contextMenu->addAction(copyAmountAction);
-    contextMenu->addAction(paperWalletAction);
 
     // context menu signals
-    connect(ui->recentRequestsView, SIGNAL(customContextMenuRequested(QPoint)), this, SLOT(showMenu(QPoint)));
-    connect(copyURIAction, SIGNAL(triggered()), this, SLOT(copyURI()));
-    connect(copyLabelAction, SIGNAL(triggered()), this, SLOT(copyLabel()));
-    connect(copyMessageAction, SIGNAL(triggered()), this, SLOT(copyMessage()));
-    connect(copyAmountAction, SIGNAL(triggered()), this, SLOT(copyAmount()));
-    connect(paperWalletAction, SIGNAL(triggered()), this, SLOT(getPaperWallet()));
+    connect(ui->recentRequestsView, &QWidget::customContextMenuRequested, this, &ReceiveCoinsDialog::showMenu);
+    connect(copyURIAction, &QAction::triggered, this, &ReceiveCoinsDialog::copyURI);
+    connect(copyLabelAction, &QAction::triggered, this, &ReceiveCoinsDialog::copyLabel);
+    connect(copyMessageAction, &QAction::triggered, this, &ReceiveCoinsDialog::copyMessage);
+    connect(copyAmountAction, &QAction::triggered, this, &ReceiveCoinsDialog::copyAmount);
 
-
-    connect(ui->clearButton, SIGNAL(clicked()), this, SLOT(clear()));
+    connect(ui->clearButton, &QPushButton::clicked, this, &ReceiveCoinsDialog::clear);
 }
 
 void ReceiveCoinsDialog::setModel(WalletModel *_model)
@@ -79,7 +73,7 @@ void ReceiveCoinsDialog::setModel(WalletModel *_model)
     if(_model && _model->getOptionsModel())
     {
         _model->getRecentRequestsTableModel()->sort(RecentRequestsTableModel::Date, Qt::DescendingOrder);
-        connect(_model->getOptionsModel(), SIGNAL(displayUnitChanged(int)), this, SLOT(updateDisplayUnit()));
+        connect(_model->getOptionsModel(), &OptionsModel::displayUnitChanged, this, &ReceiveCoinsDialog::updateDisplayUnit);
         updateDisplayUnit();
 
         QTableView* tableView = ui->recentRequestsView;
@@ -95,8 +89,8 @@ void ReceiveCoinsDialog::setModel(WalletModel *_model)
         tableView->setColumnWidth(RecentRequestsTableModel::Amount, AMOUNT_MINIMUM_COLUMN_WIDTH);
 
         connect(tableView->selectionModel(),
-            SIGNAL(selectionChanged(QItemSelection, QItemSelection)), this,
-            SLOT(recentRequestsView_selectionChanged(QItemSelection, QItemSelection)));
+            &QItemSelectionModel::selectionChanged, this,
+            &ReceiveCoinsDialog::recentRequestsView_selectionChanged);
         // Last 2 columns are set by the columnResizingFixer, when the table geometry is ready.
         columnResizingFixer = new GUIUtil::TableViewLastColumnResizingFixer(tableView, AMOUNT_MINIMUM_COLUMN_WIDTH, DATE_COLUMN_WIDTH, this);
 
@@ -121,7 +115,6 @@ void ReceiveCoinsDialog::clear()
     ui->reqAmount->clear();
     ui->reqLabel->setText("");
     ui->reqMessage->setText("");
-    ui->addressType->setCurrentIndex(ui->addressType->findText("Standard Address"));
     updateDisplayUnit();
 }
 
@@ -159,15 +152,13 @@ void ReceiveCoinsDialog::on_receiveButton_clicked()
         if (address_type == OutputType::BECH32) {
             address_type = OutputType::P2SH_SEGWIT;
         }
-        if (ui->addressType->currentText() == "Ghostnode Address")
-            address_type = OUTPUT_TYPE_LEGACY;
     }
     address = model->getAddressTableModel()->addRow(AddressTableModel::Receive, label, "", address_type);
     SendCoinsRecipient info(address, label,
         ui->reqAmount->value(), ui->reqMessage->text());
     ReceiveRequestDialog *dialog = new ReceiveRequestDialog(this);
     dialog->setAttribute(Qt::WA_DeleteOnClose);
-    dialog->setModel(model->getOptionsModel());
+    dialog->setModel(model);
     dialog->setInfo(info);
     dialog->show();
     clear();
@@ -180,7 +171,7 @@ void ReceiveCoinsDialog::on_recentRequestsView_doubleClicked(const QModelIndex &
 {
     const RecentRequestsTableModel *submodel = model->getRecentRequestsTableModel();
     ReceiveRequestDialog *dialog = new ReceiveRequestDialog(this);
-    dialog->setModel(model->getOptionsModel());
+    dialog->setModel(model);
     dialog->setInfo(submodel->entry(index.row()).recipient);
     dialog->setAttribute(Qt::WA_DeleteOnClose);
     dialog->show();
@@ -301,61 +292,4 @@ void ReceiveCoinsDialog::copyMessage()
 void ReceiveCoinsDialog::copyAmount()
 {
     copyColumnToClipboard(RecentRequestsTableModel::Amount);
-}
-
-// context menu action: get paper wallet
-void ReceiveCoinsDialog::getPaperWallet()
-{
-    if(!model || !model->getRecentRequestsTableModel() || !ui->recentRequestsView->selectionModel())
-        return;
-    QModelIndexList selection = ui->recentRequestsView->selectionModel()->selectedRows();
-
-    for (const QModelIndex& index : selection) {
-        const RecentRequestsTableModel *submodel = model->getRecentRequestsTableModel();
-        ReceiveRequestDialog *dialog = new ReceiveRequestDialog(this);
-        dialog->setModel(model->getOptionsModel());
-        SendCoinsRecipient printKey;
-        printKey.authenticatedMerchant = "idk";
-
-        /************************************/
-        CWallet * const pwallet = model->getWallet();
-        if (!EnsureWalletIsAvailable(pwallet, false)) {
-            return;
-        }
-
-
-        LOCK2(cs_main, pwallet->cs_wallet);
-
-
-        WalletModel::UnlockContext ctx(model->requestUnlock());
-        if(!ctx.isValid())
-        {
-            // Unlock wallet was cancelled
-            return;
-        }
-
-        std::string strAddress = submodel->entry(index.row()).recipient.address.toStdString();
-        CTxDestination dest = DecodeDestination(strAddress);
-        if (!IsValidDestination(dest)) {
-            return;
-        }
-        auto keyid = GetKeyForDestination(*pwallet, dest);
-        if (keyid.IsNull()) {
-            return;
-        }
-        CKey vchSecret;
-        if (!pwallet->GetKey(keyid, vchSecret)) {
-            return;
-        }
-
-        printKey.address = QString::fromStdString(CBitcoinSecret(vchSecret).ToString());
-        /************************************/
-
-        printKey.message = submodel->entry(index.row()).recipient.message;
-        printKey.amount = submodel->entry(index.row()).recipient.amount;
-        printKey.label = submodel->entry(index.row()).recipient.label;
-        dialog->setInfo(printKey);
-        dialog->setAttribute(Qt::WA_DeleteOnClose);
-        dialog->show();
-    }
 }

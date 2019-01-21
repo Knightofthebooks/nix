@@ -20,6 +20,10 @@ don't have test cases for.
 - Where possible, try to adhere to [PEP-8 guidelines](https://www.python.org/dev/peps/pep-0008/)
 - Use a python linter like flake8 before submitting PRs to catch common style
   nits (eg trailing whitespace, unused imports, etc)
+- The oldest supported Python version is specified in [doc/dependencies.md](/doc/dependencies.md).
+  Consider using [pyenv](https://github.com/pyenv/pyenv), which checks [.python-version](/.python-version),
+  to prevent accidentally introducing modern syntax from an unsupported Python version.
+  The Travis linter also checks this, but [possibly not in all cases](https://github.com/bitcoin/bitcoin/pull/14884#discussion_r239585126).
 - See [the python lint script](/test/lint/lint-python.sh) that checks for violations that
   could lead to bugs and issues in the test code.
 - Avoid wildcard imports where possible
@@ -60,6 +64,11 @@ don't have test cases for.
 - When calling RPCs with lots of arguments, consider using named keyword
   arguments instead of positional arguments to make the intent of the call
   clear to readers.
+- Many of the core test framework classes such as `CBlock` and `CTransaction`
+  don't allow new attributes to be added to their objects at runtime like
+  typical Python objects allow. This helps prevent unpredictable side effects
+  from typographical errors or usage of the objects outside of their intended
+  purpose.
 
 #### RPC and P2P definitions
 
@@ -72,7 +81,7 @@ P2P messages. These can be found in the following source files:
 
 #### Using the P2P interface
 
-- `mininode.py` contains all the definitions for objects that pass
+- `messages.py` contains all the definitions for objects that pass
 over the network (`CBlock`, `CTransaction`, etc, along with the network-level
 wrappers for them, `msg_block`, `msg_tx`, etc).
 

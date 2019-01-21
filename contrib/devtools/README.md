@@ -2,12 +2,6 @@ Contents
 ========
 This directory contains tools for developers working on this repository.
 
-check-doc.py
-============
-
-Check if all command line args are documented. The return value indicates the
-number of undocumented args.
-
 clang-format-diff.py
 ===================
 
@@ -85,7 +79,6 @@ gen-manpages.sh
 A small script to automatically create manpages in ../../doc/man by running the release binaries with the -help option.
 This requires help2man which can be found at: https://www.gnu.org/software/help2man/
 
-git-subtree-check.sh
 ====================
 
 Run this script from the root of the repository to verify that a subtree matches the contents of
@@ -101,6 +94,14 @@ maintained:
 Usage: `git-subtree-check.sh DIR (COMMIT)`
 
 `COMMIT` may be omitted, in which case `HEAD` is used.
+=======
+With in-tree builds this tool can be run from any directory within the
+repostitory. To use this tool with out-of-tree builds set `BUILDDIR`. For
+example:
+
+```bash
+BUILDDIR=$PWD/build contrib/devtools/gen-manpages.sh
+```
 
 github-merge.py
 ===============
@@ -136,6 +137,14 @@ Configuring the github-merge tool for the bitcoin repository is done in the foll
     git config githubmerge.testcmd "make -j4 check" (adapt to whatever you want to use for testing)
     git config --global user.signingkey mykeyid (if you want to GPG sign)
 
+Create and verify timestamps of merge commits
+---------------------------------------------
+To create or verify timestamps on the merge commits, install the OpenTimestamps
+client via `pip3 install opentimestamps-client`. Then, dowload the gpg wrapper
+`ots-git-gpg-wrapper.sh` and set it as git's `gpg.program`. See
+[the ots git integration documentation](https://github.com/opentimestamps/opentimestamps-client/blob/master/doc/git-integration.md#usage)
+for further details.
+
 optimize-pngs.py
 ================
 
@@ -156,7 +165,7 @@ still compatible with the minimum supported Linux distribution versions.
 
 Example usage after a gitian build:
 
-    find ../gitian-builder/build -type f -executable | xargs python contrib/devtools/symbol-check.py 
+    find ../gitian-builder/build -type f -executable | xargs python contrib/devtools/symbol-check.py
 
 If only supported symbols are used the return value will be 0 and the output will be empty.
 
@@ -178,3 +187,14 @@ It will do the following automatically:
 - add missing translations to the build system (TODO)
 
 See doc/translation-process.md for more information.
+
+circular-dependencies.py
+========================
+
+Run this script from the root of the source tree (`src/`) to find circular dependencies in the source code.
+This looks only at which files include other files, treating the `.cpp` and `.h` file as one unit.
+
+Example usage:
+
+    cd .../src
+    ../contrib/devtools/circular-dependencies.py {*,*/*,*/*/*}.{h,cpp}

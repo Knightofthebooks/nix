@@ -1,4 +1,4 @@
-// Copyright (c) 2011-2017 The Bitcoin Core developers
+// Copyright (c) 2011-2018 The Bitcoin Core developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -55,8 +55,10 @@ public Q_SLOTS:
     void accept();
     SendCoinsEntry *addEntry();
     void updateTabsAndLabels();
-    void setBalance(const CAmount& balance, const CAmount& unconfirmedBalance, const CAmount& immatureBalance,
-                    const CAmount& watchOnlyBalance, const CAmount& watchUnconfBalance, const CAmount& watchImmatureBalance,const CAmount& ghostBalance, const CAmount& ghostBalanceUnconfirmed, const CAmount& stakeBalance, const CAmount& watchStakeBalance);
+    void setBalance(const interfaces::WalletBalances& balances);
+
+Q_SIGNALS:
+    void coinsSent(const uint256& txid);
 
 private:
     Ui::SendCoinsDialog *ui;

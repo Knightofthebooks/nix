@@ -1,11 +1,11 @@
-// Copyright (c) 2011-2017 The Bitcoin Core developers
+// Copyright (c) 2011-2018 The Bitcoin Core developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #ifndef BITCOIN_QT_OVERVIEWPAGE_H
 #define BITCOIN_QT_OVERVIEWPAGE_H
 
-#include <amount.h>
+#include <interfaces/wallet.h>
 
 #include <QWidget>
 #include <QLabel>
@@ -43,9 +43,7 @@ public:
     GhostVault *ghostVaultPage;
 
 public Q_SLOTS:
-    void setBalance(const CAmount& balance, const CAmount& unconfirmedBalance, const CAmount& immatureBalance,
-                    const CAmount& watchOnlyBalance, const CAmount& watchUnconfBalance, const CAmount& watchImmatureBalance, const CAmount& ghostBalance, const CAmount& ghostBalanceUnconfirmed, const CAmount& staked, const CAmount& watchStakedBalance);
-    void setReservedBalance(CAmount reservedBalance);
+    void setBalance(const interfaces::WalletBalances& balances);
 
 Q_SIGNALS:
     void transactionClicked(const QModelIndex &index);
@@ -56,18 +54,7 @@ private:
     Ui::OverviewPage *ui;
     ClientModel *clientModel;
     WalletModel *walletModel;
-    CAmount currentBalance;
-    CAmount currentUnconfirmedBalance;
-    CAmount currentGhostBalance;
-    CAmount currentGhostBalanceUnconfirmed;
-    CAmount currentImmatureBalance;
-    CAmount currentWatchOnlyBalance;
-    CAmount currentWatchUnconfBalance;
-    CAmount currentWatchImmatureBalance;
-    CAmount currentStaked;
-    CAmount currentWatchStakedBalance;
-    CAmount currentReservedBalance;
-
+    interfaces::WalletBalances m_balances;
 
     TxViewDelegate *txdelegate;
     std::unique_ptr<TransactionFilterProxy> filter;

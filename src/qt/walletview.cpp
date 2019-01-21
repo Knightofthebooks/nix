@@ -1,4 +1,4 @@
-// Copyright (c) 2011-2017 The Bitcoin Core developers
+// Copyright (c) 2011-2018 The Bitcoin Core developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -24,6 +24,7 @@
 #include <timedata.h>
 #include <validation.h>
 
+#include <interfaces/node.h>
 #include <ui_interface.h>
 
 #include <QAction>
@@ -116,8 +117,8 @@ void WalletView::setBitcoinGUI(BitcoinGUI *gui)
         // Pass through transaction notifications
         connect(this, SIGNAL(incomingTransaction(QString,int,CAmount,QString,QString,QString)), gui, SLOT(incomingTransaction(QString,int,CAmount,QString,QString,QString)));
 
-        // Connect HD enabled state signal 
-        connect(this, SIGNAL(hdEnabledStatusChanged(int)), gui, SLOT(setHDStatus(int)));
+        // Connect HD enabled state signal
+        connect(this, SIGNAL(hdEnabledStatusChanged()), gui, SLOT(updateWalletStatus()));
     }
 }
 
@@ -173,7 +174,7 @@ void WalletView::setWalletModel(WalletModel *_walletModel)
 void WalletView::processNewTransaction(const QModelIndex& parent, int start, int /*end*/)
 {
     // Prevent balloon-spam when initial block download is in progress
-    if (!walletModel || !clientModel || clientModel->inInitialBlockDownload())
+    if (!walletModel || !clientModel || clientModel->node().isInitialBlockDownload())
         return;
 
     TransactionTableModel *ttm = walletModel->getTransactionTableModel();
@@ -286,7 +287,7 @@ void WalletView::backupWallet()
     if (filename.isEmpty())
         return;
 
-    if (!walletModel->backupWallet(filename)) {
+    if (!walletModel->wallet().backupWallet(filename.toLocal8Bit().data())) {
         Q_EMIT message(tr("Backup Failed"), tr("There was an error trying to save the wallet data to %1.").arg(filename),
             CClientUIInterface::MSG_ERROR);
         }
@@ -336,9 +337,7 @@ void WalletView::usedSendingAddresses()
     if(!walletModel)
         return;
 
-    usedSendingAddressesPage->show();
-    usedSendingAddressesPage->raise();
-    usedSendingAddressesPage->activateWindow();
+    GUIUtil::bringToFront(usedSendingAddressesPage);
 }
 
 void WalletView::usedReceivingAddresses()
@@ -346,9 +345,7 @@ void WalletView::usedReceivingAddresses()
     if(!walletModel)
         return;
 
-    usedReceivingAddressesPage->show();
-    usedReceivingAddressesPage->raise();
-    usedReceivingAddressesPage->activateWindow();
+    GUIUtil::bringToFront(usedReceivingAddressesPage);
 }
 
 void WalletView::showProgress(const QString &title, int nProgress)
@@ -358,9 +355,9 @@ void WalletView::showProgress(const QString &title, int nProgress)
         progressDialog = new QProgressDialog(title, "", 0, 100);
         progressDialog->setWindowModality(Qt::ApplicationModal);
         progressDialog->setMinimumDuration(0);
-        progressDialog->setCancelButton(0);
         progressDialog->setAutoClose(false);
         progressDialog->setValue(0);
+        progressDialog->setCancelButtonText(tr("Cancel"));
     }
     else if (nProgress == 100)
     {
@@ -370,8 +367,13 @@ void WalletView::showProgress(const QString &title, int nProgress)
             progressDialog->deleteLater();
         }
     }
-    else if (progressDialog)
-        progressDialog->setValue(nProgress);
+    else if (progressDialog) {
+        if (progressDialog->wasCanceled()) {
+            getWalletModel()->wallet().abortRescan();
+        } else {
+            progressDialog->setValue(nProgress);
+        }
+    }
 }
 
 void WalletView::requestedSyncWarningInfo()

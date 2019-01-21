@@ -1,5 +1,5 @@
 // Copyright (c) 2009-2010 Satoshi Nakamoto
-// Copyright (c) 2009-2017 The Bitcoin Core developers
+// Copyright (c) 2009-2018 The Bitcoin Core developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -51,21 +51,23 @@ public:
     virtual size_t CountKeys() const =0;
 };
 
-typedef std::map<CKeyID, CKey> KeyMap;
-typedef std::map<CKeyID, CPubKey> WatchKeyMap;
-typedef std::map<CScriptID, CScript > ScriptMap;
-typedef std::set<CScript> WatchOnlySet;
-
 /** Basic key store, that keeps keys in an address->secret map */
 class CBasicKeyStore : public CKeyStore
 {
 protected:
-    KeyMap mapKeys;
-    WatchKeyMap mapWatchKeys;
-    ScriptMap mapScripts;
-    WatchOnlySet setWatchOnly;
+    mutable CCriticalSection cs_KeyStore;
 
-    void ImplicitlyLearnRelatedKeyScripts(const CPubKey& pubkey);
+    using KeyMap = std::map<CKeyID, CKey>;
+    using WatchKeyMap = std::map<CKeyID, CPubKey>;
+    using ScriptMap = std::map<CScriptID, CScript>;
+    using WatchOnlySet = std::set<CScript>;
+
+    KeyMap mapKeys GUARDED_BY(cs_KeyStore);
+    WatchKeyMap mapWatchKeys GUARDED_BY(cs_KeyStore);
+    ScriptMap mapScripts GUARDED_BY(cs_KeyStore);
+    WatchOnlySet setWatchOnly GUARDED_BY(cs_KeyStore);
+
+    void ImplicitlyLearnRelatedKeyScripts(const CPubKey& pubkey) EXCLUSIVE_LOCKS_REQUIRED(cs_KeyStore);
 
 public:
     bool AddKeyPubKey(const CKey& key, const CPubKey &pubkey) override;
@@ -91,10 +93,10 @@ public:
     };
 };
 
-typedef std::vector<unsigned char, secure_allocator<unsigned char> > CKeyingMaterial;
-typedef std::map<CKeyID, std::pair<CPubKey, std::vector<unsigned char> > > CryptedKeyMap;
-
 /** Return the CKeyID of the key involved in a script (if there is a unique one). */
 CKeyID GetKeyForDestination(const CKeyStore& store, const CTxDestination& dest);
+
+/** Checks if a CKey is in the given CKeyStore compressed or otherwise*/
+bool HaveKey(const CKeyStore& store, const CKey& key);
 
 #endif // BITCOIN_KEYSTORE_H

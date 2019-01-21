@@ -1,4 +1,4 @@
-// Copyright (c) 2009-2017 The Bitcoin Core developers
+// Copyright (c) 2009-2018 The Bitcoin Core developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -69,7 +69,7 @@ bool DecryptSecret(const CKeyingMaterial& vMasterKey, const std::vector<unsigned
 
 typedef std::vector<unsigned char, secure_allocator<unsigned char> > CKeyingMaterial;
 
-namespace wallet_crypto
+namespace wallet_crypto_tests
 {
     class TestCrypter;
 }
@@ -77,7 +77,7 @@ namespace wallet_crypto
 /** Encryption/decryption context with key information */
 class CCrypter
 {
-friend class wallet_crypto::TestCrypter; // for test access to chKey/chIV
+friend class wallet_crypto_tests::TestCrypter; // for test access to chKey/chIV
 private:
     std::vector<unsigned char, secure_allocator<unsigned char>> vchKey;
     std::vector<unsigned char, secure_allocator<unsigned char>> vchIV;
@@ -119,7 +119,7 @@ class CCryptoKeyStore : public CBasicKeyStore
     friend class CWallet;
 private:
 
-    CKeyingMaterial vMasterKey;
+    CKeyingMaterial vMasterKey GUARDED_BY(cs_KeyStore);
 
     //! if fUseCrypto is true, mapKeys must be empty
     //! if fUseCrypto is false, vMasterKey must be empty
@@ -130,13 +130,15 @@ private:
     bool fOnlyMixingAllowed;
 
 protected:
+    using CryptedKeyMap = std::map<CKeyID, std::pair<CPubKey, std::vector<unsigned char>>>;
+
     bool SetCrypted();
 
     //! will encrypt previously unencrypted keys
     bool EncryptKeys(CKeyingMaterial& vMasterKeyIn);
 
     bool Unlock(const CKeyingMaterial& vMasterKeyIn);
-    CryptedKeyMap mapCryptedKeys;
+    CryptedKeyMap mapCryptedKeys GUARDED_BY(cs_KeyStore);
 
 public:
     CCryptoKeyStore() : fUseCrypto(false), fDecryptionThoroughlyChecked(false)

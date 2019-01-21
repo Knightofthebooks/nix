@@ -5,9 +5,10 @@
 
 DIST_SUBDIRS = secp256k1 univalue tor
 
-AM_LDFLAGS = $(PTHREAD_CFLAGS) $(LIBTOOL_LDFLAGS) $(HARDENED_LDFLAGS)
-AM_CXXFLAGS = $(HARDENED_CXXFLAGS) $(ERROR_CXXFLAGS)
-AM_CPPFLAGS = $(HARDENED_CPPFLAGS)
+AM_LDFLAGS = $(PTHREAD_CFLAGS) $(LIBTOOL_LDFLAGS) $(HARDENED_LDFLAGS) $(GPROF_LDFLAGS) $(SANITIZER_LDFLAGS)
+AM_CXXFLAGS = $(DEBUG_CXXFLAGS) $(HARDENED_CXXFLAGS) $(WARN_CXXFLAGS) $(NOWARN_CXXFLAGS) $(ERROR_CXXFLAGS) $(GPROF_CXXFLAGS) $(SANITIZER_CXXFLAGS)
+AM_CPPFLAGS = $(DEBUG_CPPFLAGS) $(HARDENED_CPPFLAGS)
+AM_LIBTOOLFLAGS = --preserve-dup-deps
 EXTRA_LIBRARIES =
 
 if EMBEDDED_UNIVALUE
@@ -73,7 +74,21 @@ if ENABLE_USBDEVICE
 LIBPARTICL_USBDEVICE=libnix_usbdevice.a
 endif
 
-$(LIBSECP256K1): $(wildcard secp256k1/src/*) $(wildcard secp256k1/include/*)
+LIBNIX_CRYPTO= $(LIBNIX_CRYPTO_BASE)
+if ENABLE_SSE41
+LIBNIX_CRYPTO_SSE41 = crypto/libnix_crypto_sse41.a
+LIBNIX_CRYPTO += $(LIBNIX_CRYPTO_SSE41)
+endif
+if ENABLE_AVX2
+LIBNIX_CRYPTO_AVX2 = crypto/libnix_crypto_avx2.a
+LIBNIX_CRYPTO += $(LIBNIX_CRYPTO_AVX2)
+endif
+if ENABLE_SHANI
+LIBNIX_CRYPTO_SHANI = crypto/libnix_crypto_shani.a
+LIBNIX_CRYPTO += $(LIBNIX_CRYPTO_SHANI)
+endif
+
+$(LIBSECP256K1): $(wildcard secp256k1/src/*.h) $(wildcard secp256k1/src/*.c) $(wildcard secp256k1/include/*)
 	$(AM_V_at)$(MAKE) $(AM_MAKEFLAGS) -C $(@D) $(@F)
 
 # Make is not made aware of per-object dependencies to avoid limiting building parallelization
@@ -149,12 +164,18 @@ NIX_CORE_H = \
   ghostnode/netfulfilledman.h \
   httprpc.h \
   httpserver.h \
+  index/base.h \
+  index/txindex.h \
   indirectmap.h \
   init.h \
+  interfaces/handler.h \
+  interfaces/node.h \
+  interfaces/wallet.h \
   key.h \
   keystore.h \
   dbwrapper.h \
   limitedmap.h \
+  logging.h \
   memusage.h \
   merkleblock.h \
   miner.h \
@@ -164,6 +185,7 @@ NIX_CORE_H = \
   netbase.h \
   netmessagemaker.h \
   noui.h \
+  outputtype.h \
   policy/feerate.h \
   policy/fees.h \
   policy/policy.h \
@@ -177,15 +199,16 @@ NIX_CORE_H = \
   rpc/client.h \
   rpc/mining.h \
   rpc/protocol.h \
-  rpc/safemode.h \
   rpc/server.h \
   rpc/register.h \
   rpc/util.h \
   scheduler.h \
+	script/descriptor.h \
+  script/ismine.h \
   script/sigcache.h \
   script/sign.h \
   script/standard.h \
-  script/ismine.h \
+  shutdown.h \
   ghost-address/commitmentkey.h \
   ghost-address/lz4.h \
   ghost-address/extkey.h \
@@ -221,6 +244,7 @@ NIX_CORE_H = \
   unilib/uninorms.h \
   unilib/utf8.h \
   util.h \
+  utilmemory.h \
   utilmoneystr.h \
   utiltime.h \
   validation.h \
@@ -231,7 +255,6 @@ NIX_CORE_H = \
   wallet/db.h \
   wallet/feebumper.h \
   wallet/fees.h \
-  wallet/init.h \
   wallet/rpcwallet.h \
   wallet/wallet.h \
   wallet/walletdb.h \
@@ -243,7 +266,8 @@ NIX_CORE_H = \
   zmq/zmqnotificationinterface.h \
   usbdevice/usbdevice.h \
   usbdevice/rpcusbdevice.h \
-  zmq/zmqpublishnotifier.h
+	zmq/zmqpublishnotifier.h \
+  zmq/zmqrpc.h
 
 
 obj/build.h: FORCE
@@ -266,6 +290,8 @@ libnix_server_a_SOURCES = \
   consensus/tx_verify.cpp \
   httprpc.cpp \
   httpserver.cpp \
+  index/base.cpp \
+  index/txindex.cpp \
   init.cpp \
   dbwrapper.cpp \
   ghostnode/rpcghostnode.cpp \
@@ -275,6 +301,7 @@ libnix_server_a_SOURCES = \
   net.cpp \
   net_processing.cpp \
   noui.cpp \
+  outputtype.cpp \
   policy/fees.cpp \
   policy/policy.cpp \
   policy/rbf.cpp \
@@ -289,8 +316,9 @@ libnix_server_a_SOURCES = \
   rpc/mnemonic.cpp \
   rpc/safemode.cpp \
   rpc/server.cpp \
+  rpc/util.cpp \
   script/sigcache.cpp \
-  script/ismine.cpp \
+  shutdown.cpp \
   timedata.cpp \
   torcontrol.cpp \
   txdb.cpp \
@@ -308,7 +336,8 @@ libnix_zmq_a_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
 libnix_zmq_a_SOURCES = \
   zmq/zmqabstractnotifier.cpp \
   zmq/zmqnotificationinterface.cpp \
-  zmq/zmqpublishnotifier.cpp
+  zmq/zmqpublishnotifier.cpp \
+  zmq/zmqrpc.cpp
 endif
 
 if ENABLE_USBDEVICE
@@ -346,6 +375,8 @@ libnix_wallet_a_SOURCES = \
   ghostnode/instantx.cpp \
   ghost-address/commitmentkey.cpp \
   pos/miner.cpp \
+	interfaces/wallet.cpp \
+	wallet/coincontrol.cpp \
   wallet/crypter.cpp \
   wallet/db.cpp \
   wallet/feebumper.cpp \
@@ -359,10 +390,9 @@ libnix_wallet_a_SOURCES = \
   $(NIX_CORE_H)
 
 # crypto primitives library
-crypto_libnix_crypto_a_CFLAGS = $(AM_CFLAGS) $(PIC_FLAGS)
-crypto_libnix_crypto_a_CPPFLAGS = $(AM_CPPFLAGS)
-crypto_libnix_crypto_a_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
-crypto_libnix_crypto_a_SOURCES = \
+crypto_libnix_crypto_base_a_CPPFLAGS = $(AM_CPPFLAGS)
+crypto_libnix_crypto_base_a_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
+crypto_libnix_crypto_base_a_SOURCES = \
   crypto/aes.cpp \
   crypto/aes.h \
   crypto/chacha20.h \
@@ -392,7 +422,7 @@ crypto_libnix_crypto_a_SOURCES = \
   crypto/Lyra2RE/skein.c \
   crypto/Lyra2RE/cubehash.c \
   crypto/Lyra2RE/bmw.c \
-  crypto/Lyra2RE/sph_blake.h \	
+  crypto/Lyra2RE/sph_blake.h \
   crypto/Lyra2RE/sph_bmw.h \
   crypto/Lyra2RE/sph_cubehash.h \
   crypto/Lyra2RE/sph_groestl.h \
@@ -401,8 +431,26 @@ crypto_libnix_crypto_a_SOURCES = \
   crypto/Lyra2RE/sph_types.h
 
 if USE_ASM
-crypto_libnix_crypto_a_SOURCES += crypto/sha256_sse4.cpp
+crypto_libnix_crypto_base_a_SOURCES += crypto/sha256_sse4.cpp
 endif
+
+crypto_libnix_crypto_sse41_a_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
+crypto_libnix_crypto_sse41_a_CPPFLAGS = $(AM_CPPFLAGS)
+crypto_libnix_crypto_sse41_a_CXXFLAGS += $(SSE41_CXXFLAGS)
+crypto_libnix_crypto_sse41_a_CPPFLAGS += -DENABLE_SSE41
+crypto_libnix_crypto_sse41_a_SOURCES = crypto/sha256_sse41.cpp
+
+crypto_libnix_crypto_avx2_a_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
+crypto_libnix_crypto_avx2_a_CPPFLAGS = $(AM_CPPFLAGS)
+crypto_libnix_crypto_avx2_a_CXXFLAGS += $(AVX2_CXXFLAGS)
+crypto_libnix_crypto_avx2_a_CPPFLAGS += -DENABLE_AVX2
+crypto_libnix_crypto_avx2_a_SOURCES = crypto/sha256_avx2.cpp
+
+crypto_libnix_crypto_shani_a_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
+crypto_libnix_crypto_shani_a_CPPFLAGS = $(AM_CPPFLAGS)
+crypto_libnix_crypto_shani_a_CXXFLAGS += $(SHANI_CXXFLAGS)
+crypto_libnix_crypto_shani_a_CPPFLAGS += -DENABLE_SHANI
+crypto_libnix_crypto_shani_a_SOURCES = crypto/sha256_shani.cpp
 
 # consensus: shared between all executables that validate any consensus rules.
 libnix_consensus_a_CPPFLAGS = $(AM_CPPFLAGS) $(NIX_INCLUDES)
@@ -434,6 +482,7 @@ libnix_consensus_a_SOURCES = \
   script/script_error.cpp \
   script/script_error.h \
   serialize.h \
+  span.h \
   tinyformat.h \
   uint256.cpp \
   uint256.h \
@@ -460,6 +509,8 @@ libnix_common_a_SOURCES = \
   policy/feerate.cpp \
   protocol.cpp \
   scheduler.cpp \
+  script/descriptor.cpp \
+  script/ismine.cpp \
   script/sign.cpp \
   script/standard.cpp \
   unilib/uninorms.cpp \
@@ -509,9 +560,11 @@ libnix_util_a_SOURCES = \
   libzerocoin/SpendMetaData.cpp \
   libzerocoin/Zerocoin.h \
   fs.cpp \
+  interfaces/handler.cpp \
+  interfaces/node.cpp \
+  logging.cpp \
   random.cpp \
   rpc/protocol.cpp \
-  rpc/util.cpp \
   support/cleanse.cpp \
   sync.cpp \
   threadinterrupt.cpp \
@@ -524,6 +577,7 @@ libnix_util_a_SOURCES = \
 
 if GLIBC_BACK_COMPAT
 libnix_util_a_SOURCES += compat/glibc_compat.cpp
+AM_LDFLAGS += $(COMPAT_LDFLAGS)
 endif
 
 # cli: shared between nix-cli and nix-qt
@@ -606,7 +660,7 @@ nix_tx_LDADD += $(BOOST_LIBS) $(CRYPTO_LIBS)
 # nixconsensus library #
 if BUILD_NIX_LIBS
 include_HEADERS = script/nixconsensus.h
-libnixconsensus_la_SOURCES = $(crypto_libnix_crypto_a_SOURCES) $(libnix_consensus_a_SOURCES)
+libnixconsensus_la_SOURCES = $(crypto_libnix_crypto_base_a_SOURCES) $(libnix_consensus_a_SOURCES)
 
 if GLIBC_BACK_COMPAT
   libnixconsensus_la_SOURCES += compat/glibc_compat.cpp

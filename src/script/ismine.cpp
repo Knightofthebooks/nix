@@ -1,5 +1,5 @@
 // Copyright (c) 2009-2010 Satoshi Nakamoto
-// Copyright (c) 2009-2017 The Bitcoin Core developers
+// Copyright (c) 2009-2018 The Bitcoin Core developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -15,52 +15,53 @@
 
 //typedef std::vector<unsigned char> valtype;
 
-unsigned int HaveKeys(const std::vector<valtype>& pubkeys, const CKeyStore& keystore)
+typedef std::vector<unsigned char> valtype;
+
+namespace {
+
+/**
+ * This is an enum that tracks the execution context of a script, similar to
+ * SigVersion in script/interpreter. It is separate however because we want to
+ * distinguish between top-level scriptPubKey execution and P2SH redeemScript
+ * execution (a distinction that has no impact on consensus rules).
+ */
+enum class IsMineSigVersion
 {
-    unsigned int nResult = 0;
-    for (const valtype& pubkey : pubkeys)
-    {
+    TOP = 0,        //! scriptPubKey execution
+    P2SH = 1,       //! P2SH redeemScript
+    WITNESS_V0 = 2  //! P2WSH witness script execution
+};
+
+/**
+ * This is an internal representation of isminetype + invalidity.
+ * Its order is significant, as we return the max of all explored
+ * possibilities.
+ */
+enum class IsMineResult
+{
+    NO = 0,          //! Not ours
+    WATCH_ONLY = 1,  //! Included in watch-only balance
+    SPENDABLE = 2,   //! Included in all balances
+    INVALID = 3,     //! Not spendable by anyone (uncompressed pubkey in segwit, P2SH inside P2SH or witness, witness inside witness)
+};
+
+bool PermitsUncompressed(IsMineSigVersion sigversion)
+{
+    return sigversion == IsMineSigVersion::TOP || sigversion == IsMineSigVersion::P2SH;
+}
+
+bool HaveKeys(const std::vector<valtype>& pubkeys, const CKeyStore& keystore)
+{
+    for (const valtype& pubkey : pubkeys) {
         CKeyID keyID = CPubKey(pubkey).GetID();
-        if (keystore.HaveKey(keyID))
-            ++nResult;
+        if (!keystore.HaveKey(keyID)) return false;
     }
-    return nResult;
+    return true;
 }
 
-isminetype IsMine(const CKeyStore& keystore, const CScript& scriptPubKey, SigVersion sigversion)
+IsMineResult IsMineInner(const CKeyStore& keystore, const CScript& scriptPubKey, IsMineSigVersion sigversion)
 {
-    bool isInvalid = false;
-    return IsMine(keystore, scriptPubKey, isInvalid, sigversion);
-}
-
-isminetype IsMine(const CKeyStore& keystore, const CTxDestination& dest, SigVersion sigversion)
-{
-    bool isInvalid = false;
-    return IsMine(keystore, dest, isInvalid, sigversion);
-}
-
-isminetype IsMine(const CKeyStore &keystore, const CTxDestination& dest, bool& isInvalid, SigVersion sigversion)
-{
-    if (dest.type() == typeid(CStealthAddress))
-    {
-        const CStealthAddress &sxAddr = boost::get<CStealthAddress>(dest);
-        return sxAddr.scan_secret.size() == EC_SECRET_SIZE ? ISMINE_SPENDABLE : ISMINE_NO; // TODO: watch only?
-    };
-
-    if (dest.type() == typeid(CGhostAddress))
-    {
-        const CGhostAddress &sxAddr = boost::get<CGhostAddress>(dest);
-        return sxAddr.scan_secret.size() == EC_SECRET_SIZE ? ISMINE_SPENDABLE : ISMINE_NO; // TODO: watch only?
-    }
-
-    CScript script = GetScriptForDestination(dest);
-    return IsMine(keystore, script, isInvalid, sigversion);
-}
-
-isminetype IsMine(const CKeyStore &keystore, const CScript& scriptPubKey, bool& isInvalid, SigVersion sigversion)
-{
-
-    isInvalid = false;
+    IsMineResult ret = IsMineResult::NO;
 
     if (HasIsCoinstakeOp(scriptPubKey))
     {
@@ -88,11 +89,7 @@ isminetype IsMine(const CKeyStore &keystore, const CScript& scriptPubKey, bool& 
 
     std::vector<valtype> vSolutions;
     txnouttype whichType;
-    if (!Solver(scriptPubKey, whichType, vSolutions)) {
-        if (keystore.HaveWatchOnly(scriptPubKey))
-            return ISMINE_WATCH_UNSOLVABLE;
-        return ISMINE_NO;
-    }
+    Solver(scriptPubKey, whichType, vSolutions);
 
     CKeyID keyID;
 
@@ -106,73 +103,62 @@ isminetype IsMine(const CKeyStore &keystore, const CScript& scriptPubKey, bool& 
     case TX_ZEROCOINMINT:
     case TX_PUBKEY:
         keyID = CPubKey(vSolutions[0]).GetID();
-        if (sigversion != SIGVERSION_BASE && vSolutions[0].size() != 33) {
-            isInvalid = true;
-            return ISMINE_NO;
+        if (!PermitsUncompressed(sigversion) && vSolutions[0].size() != 33) {
+            return IsMineResult::INVALID;
         }
-        if ((mine = keystore.IsMine(keyID)))
-            return mine;
-        //if (keystore.HaveKey(keyID))
-        //    return ISMINE_SPENDABLE;
+        if (keystore.HaveKey(keyID)) {
+            ret = std::max(ret, IsMineResult::SPENDABLE);
+        }
         break;
     case TX_WITNESS_V0_KEYHASH:
     {
-        if (!keystore.HaveCScript(CScriptID(CScript() << OP_0 << vSolutions[0]))) {
+        if (sigversion == IsMineSigVersion::WITNESS_V0) {
+            // P2WPKH inside P2WSH is invalid.
+            return IsMineResult::INVALID;
+        }
+        if (sigversion == IsMineSigVersion::TOP && !keystore.HaveCScript(CScriptID(CScript() << OP_0 << vSolutions[0]))) {
             // We do not support bare witness outputs unless the P2SH version of it would be
             // acceptable as well. This protects against matching before segwit activates.
             // This also applies to the P2WSH case.
             break;
         }
-        isminetype ret = ::IsMine(keystore, GetScriptForDestination(CKeyID(uint160(vSolutions[0]))), isInvalid, SIGVERSION_WITNESS_V0);
-        if (ret == ISMINE_SPENDABLE || ret == ISMINE_WATCH_SOLVABLE || (ret == ISMINE_NO && isInvalid))
-            return ret;
+        ret = std::max(ret, IsMineInner(keystore, GetScriptForDestination(CKeyID(uint160(vSolutions[0]))), IsMineSigVersion::WITNESS_V0));
         break;
     }
     case TX_PUBKEYHASH:
-    case TX_TIMELOCKED_PUBKEYHASH:
-    case TX_PUBKEYHASH256:
-        if (vSolutions[0].size() == 20)
-            keyID = CKeyID(uint160(vSolutions[0]));
-        else
-        if (vSolutions[0].size() == 32)
-            keyID = CKeyID(uint256(vSolutions[0]));
-        else
-            return ISMINE_NO;
-        if (sigversion != SIGVERSION_BASE) {
+        keyID = CKeyID(uint160(vSolutions[0]));
+        if (!PermitsUncompressed(sigversion)) {
             CPubKey pubkey;
             if (keystore.GetPubKey(keyID, pubkey) && !pubkey.IsCompressed()) {
-                isInvalid = true;
-                return ISMINE_NO;
+                return IsMineResult::INVALID;
             }
         }
-        if ((mine = keystore.IsMine(keyID)))
-            return mine;
-        //if (keystore.HaveKey(keyID))
-        //    return ISMINE_SPENDABLE;
+        if (keystore.HaveKey(keyID)) {
+            ret = std::max(ret, IsMineResult::SPENDABLE);
+        }
         break;
     case TX_SCRIPTHASH:
     case TX_TIMELOCKED_SCRIPTHASH:
     case TX_SCRIPTHASH256:
     {
-        CScriptID scriptID;
-        if (vSolutions[0].size() == 20)
-            scriptID = CScriptID(uint160(vSolutions[0]));
-        else
-        if (vSolutions[0].size() == 32)
-            scriptID.Set(uint256(vSolutions[0]));
-        else
-            return ISMINE_NO;
+        if (sigversion != IsMineSigVersion::TOP) {
+            // P2SH inside P2WSH or P2SH is invalid.
+            return IsMineResult::INVALID;
+        }
+        CScriptID scriptID = CScriptID(uint160(vSolutions[0]));
         CScript subscript;
         if (keystore.GetCScript(scriptID, subscript)) {
-            isminetype ret = IsMine(keystore, subscript, isInvalid);
-            if (ret == ISMINE_SPENDABLE || ret == ISMINE_WATCH_SOLVABLE || (ret == ISMINE_NO && isInvalid))
-                return ret;
+            ret = std::max(ret, IsMineInner(keystore, subscript, IsMineSigVersion::P2SH));
         }
         break;
     }
     case TX_WITNESS_V0_SCRIPTHASH:
     {
-        if (!keystore.HaveCScript(CScriptID(CScript() << OP_0 << vSolutions[0]))) {
+        if (sigversion == IsMineSigVersion::WITNESS_V0) {
+            // P2WSH inside P2WSH is invalid.
+            return IsMineResult::INVALID;
+        }
+        if (sigversion == IsMineSigVersion::TOP && !keystore.HaveCScript(CScriptID(CScript() << OP_0 << vSolutions[0]))) {
             break;
         }
         uint160 hash;
@@ -180,9 +166,7 @@ isminetype IsMine(const CKeyStore &keystore, const CScript& scriptPubKey, bool& 
         CScriptID scriptID = CScriptID(hash);
         CScript subscript;
         if (keystore.GetCScript(scriptID, subscript)) {
-            isminetype ret = IsMine(keystore, subscript, isInvalid, SIGVERSION_WITNESS_V0);
-            if (ret == ISMINE_SPENDABLE || ret == ISMINE_WATCH_SOLVABLE || (ret == ISMINE_NO && isInvalid))
-                return ret;
+            ret = std::max(ret, IsMineInner(keystore, subscript, IsMineSigVersion::WITNESS_V0));
         }
         break;
     }
@@ -190,32 +174,57 @@ isminetype IsMine(const CKeyStore &keystore, const CScript& scriptPubKey, bool& 
     case TX_MULTISIG:
     case TX_TIMELOCKED_MULTISIG:
     {
+        // Never treat bare multisig outputs as ours (they can still be made watchonly-though)
+        if (sigversion == IsMineSigVersion::TOP) {
+            break;
+        }
+
         // Only consider transactions "mine" if we own ALL the
         // keys involved. Multi-signature transactions that are
         // partially owned (somebody else has a key that can spend
         // them) enable spend-out-from-under-you attacks, especially
         // in shared-wallet situations.
         std::vector<valtype> keys(vSolutions.begin()+1, vSolutions.begin()+vSolutions.size()-1);
-        if (sigversion != SIGVERSION_BASE) {
+        if (!PermitsUncompressed(sigversion)) {
             for (size_t i = 0; i < keys.size(); i++) {
                 if (keys[i].size() != 33) {
-                    isInvalid = true;
-                    return ISMINE_NO;
+                    return IsMineResult::INVALID;
                 }
             }
         }
-        if (HaveKeys(keys, keystore) == keys.size())
-            return ISMINE_SPENDABLE;
+        if (HaveKeys(keys, keystore)) {
+            ret = std::max(ret, IsMineResult::SPENDABLE);
+        }
         break;
     }
     default:
         break;
     }
 
-    if (keystore.HaveWatchOnly(scriptPubKey)) {
-        // TODO: This could be optimized some by doing some work after the above solver
-        SignatureData sigs;
-        return ProduceSignature(DummySignatureCreator(&keystore), scriptPubKey, sigs) ? ISMINE_WATCH_SOLVABLE : ISMINE_WATCH_UNSOLVABLE;
+    if (ret == IsMineResult::NO && keystore.HaveWatchOnly(scriptPubKey)) {
+        ret = std::max(ret, IsMineResult::WATCH_ONLY);
     }
-    return ISMINE_NO;
+    return ret;
+}
+
+} // namespace
+
+isminetype IsMine(const CKeyStore& keystore, const CScript& scriptPubKey)
+{
+    switch (IsMineInner(keystore, scriptPubKey, IsMineSigVersion::TOP)) {
+    case IsMineResult::INVALID:
+    case IsMineResult::NO:
+        return ISMINE_NO;
+    case IsMineResult::WATCH_ONLY:
+        return ISMINE_WATCH_ONLY;
+    case IsMineResult::SPENDABLE:
+        return ISMINE_SPENDABLE;
+    }
+    assert(false);
+}
+
+isminetype IsMine(const CKeyStore& keystore, const CTxDestination& dest)
+{
+    CScript script = GetScriptForDestination(dest);
+    return IsMine(keystore, script);
 }

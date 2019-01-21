@@ -1,5 +1,5 @@
 // Copyright (c) 2009-2010 Satoshi Nakamoto
-// Copyright (c) 2009-2017 The Bitcoin Core developers
+// Copyright (c) 2009-2018 The Bitcoin Core developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -31,6 +31,7 @@
 
 #include <algorithm>
 #include <fcntl.h>
+#include <sched.h>
 #include <sys/resource.h>
 #include <sys/stat.h>
 
@@ -73,7 +74,6 @@
 #include <boost/algorithm/string/case_conv.hpp> // for to_lower()
 #include <boost/algorithm/string/predicate.hpp> // for startswith() and endswith()
 #include <boost/interprocess/sync/file_lock.hpp>
-#include <boost/program_options/detail/config_file.hpp>
 #include <boost/thread.hpp>
 #include <openssl/crypto.h>
 #include <openssl/rand.h>
@@ -90,20 +90,10 @@ const int64_t nStartupTime = GetTime();
 
 const char * const BITCOIN_CONF_FILENAME = "nix.conf";
 const char * const BITCOIN_PID_FILENAME = "nixd.pid";
-const char * const DEFAULT_DEBUGLOGFILE = "debug.log";
 
 ArgsManager gArgs;
-bool fPrintToConsole = false;
-bool fPrintToDebugLog = true;
 
-bool fLogTimestamps = DEFAULT_LOGTIMESTAMPS;
-bool fLogTimeMicros = DEFAULT_LOGTIMEMICROS;
-bool fLogIPs = DEFAULT_LOGIPS;
-std::atomic<bool> fReopenDebugLog(false);
 CTranslationInterface translationInterface;
-
-/** Log categories bitfield. */
-std::atomic<uint32_t> logCategories(0);
 
 /** Init OpenSSL library multithreading support */
 static std::unique_ptr<CCriticalSection[]> ppmutexOpenSSL;
@@ -189,235 +179,6 @@ public:
 }
 instance_of_cinit;
 
-/**
- * LogPrintf() has been broken a couple of times now
- * by well-meaning people adding mutexes in the most straightforward way.
- * It breaks because it may be called by global destructors during shutdown.
- * Since the order of destruction of static/global objects is undefined,
- * defining a mutex as a global object doesn't work (the mutex gets
- * destroyed, and then some later destructor calls OutputDebugStringF,
- * maybe indirectly, and you get a core dump at shutdown trying to lock
- * the mutex).
- */
-
-static boost::once_flag debugPrintInitFlag = BOOST_ONCE_INIT;
-
-/**
- * We use boost::call_once() to make sure mutexDebugLog and
- * vMsgsBeforeOpenLog are initialized in a thread-safe manner.
- *
- * NOTE: fileout, mutexDebugLog and sometimes vMsgsBeforeOpenLog
- * are leaked on exit. This is ugly, but will be cleaned up by
- * the OS/libc. When the shutdown sequence is fully audited and
- * tested, explicit destruction of these objects can be implemented.
- */
-static FILE* fileout = nullptr;
-static boost::mutex* mutexDebugLog = nullptr;
-static std::list<std::string>* vMsgsBeforeOpenLog;
-
-static int FileWriteStr(const std::string &str, FILE *fp)
-{
-    return fwrite(str.data(), 1, str.size(), fp);
-}
-
-static void DebugPrintInit()
-{
-    assert(mutexDebugLog == nullptr);
-    mutexDebugLog = new boost::mutex();
-    vMsgsBeforeOpenLog = new std::list<std::string>;
-}
-
-fs::path GetDebugLogPath()
-{
-    fs::path logfile(gArgs.GetArg("-debuglogfile", DEFAULT_DEBUGLOGFILE));
-    if (logfile.is_absolute()) {
-        return logfile;
-    } else {
-        return GetDataDir() / logfile;
-    }
-}
-
-bool OpenDebugLog()
-{
-    boost::call_once(&DebugPrintInit, debugPrintInitFlag);
-    boost::mutex::scoped_lock scoped_lock(*mutexDebugLog);
-
-    assert(fileout == nullptr);
-    assert(vMsgsBeforeOpenLog);
-    fs::path pathDebug = GetDebugLogPath();
-
-    fileout = fsbridge::fopen(pathDebug, "a");
-    if (!fileout) {
-        return false;
-    }
-
-    setbuf(fileout, nullptr); // unbuffered
-    // dump buffered messages from before we opened the log
-    while (!vMsgsBeforeOpenLog->empty()) {
-        FileWriteStr(vMsgsBeforeOpenLog->front(), fileout);
-        vMsgsBeforeOpenLog->pop_front();
-    }
-
-    delete vMsgsBeforeOpenLog;
-    vMsgsBeforeOpenLog = nullptr;
-    return true;
-}
-
-struct CLogCategoryDesc
-{
-    uint32_t flag;
-    std::string category;
-};
-
-const CLogCategoryDesc LogCategories[] =
-{
-    {BCLog::NONE, "0"},
-    {BCLog::NONE, "none"},
-    {BCLog::NET, "net"},
-    {BCLog::TOR, "tor"},
-    {BCLog::MEMPOOL, "mempool"},
-    {BCLog::HTTP, "http"},
-    {BCLog::BENCH, "bench"},
-    {BCLog::ZMQ, "zmq"},
-    {BCLog::DB, "db"},
-    {BCLog::RPC, "rpc"},
-    {BCLog::ESTIMATEFEE, "estimatefee"},
-    {BCLog::ADDRMAN, "addrman"},
-    {BCLog::SELECTCOINS, "selectcoins"},
-    {BCLog::REINDEX, "reindex"},
-    {BCLog::CMPCTBLOCK, "cmpctblock"},
-    {BCLog::RAND, "rand"},
-    {BCLog::PRUNE, "prune"},
-    {BCLog::PROXY, "proxy"},
-    {BCLog::MEMPOOLREJ, "mempoolrej"},
-    {BCLog::LIBEVENT, "libevent"},
-    {BCLog::COINDB, "coindb"},
-    {BCLog::QT, "qt"},
-    {BCLog::LEVELDB, "leveldb"},
-    {BCLog::ALL, "1"},
-    {BCLog::ALL, "all"},
-};
-
-bool GetLogCategory(uint32_t *f, const std::string *str)
-{
-    if (f && str) {
-        if (*str == "") {
-            *f = BCLog::ALL;
-            return true;
-        }
-        for (unsigned int i = 0; i < ARRAYLEN(LogCategories); i++) {
-            if (LogCategories[i].category == *str) {
-                *f = LogCategories[i].flag;
-                return true;
-            }
-        }
-    }
-    return false;
-}
-
-std::string ListLogCategories()
-{
-    std::string ret;
-    int outcount = 0;
-    for (unsigned int i = 0; i < ARRAYLEN(LogCategories); i++) {
-        // Omit the special cases.
-        if (LogCategories[i].flag != BCLog::NONE && LogCategories[i].flag != BCLog::ALL) {
-            if (outcount != 0) ret += ", ";
-            ret += LogCategories[i].category;
-            outcount++;
-        }
-    }
-    return ret;
-}
-
-std::vector<CLogCategoryActive> ListActiveLogCategories()
-{
-    std::vector<CLogCategoryActive> ret;
-    for (unsigned int i = 0; i < ARRAYLEN(LogCategories); i++) {
-        // Omit the special cases.
-        if (LogCategories[i].flag != BCLog::NONE && LogCategories[i].flag != BCLog::ALL) {
-            CLogCategoryActive catActive;
-            catActive.category = LogCategories[i].category;
-            catActive.active = LogAcceptCategory(LogCategories[i].flag);
-            ret.push_back(catActive);
-        }
-    }
-    return ret;
-}
-
-/**
- * fStartedNewLine is a state variable held by the calling context that will
- * suppress printing of the timestamp when multiple calls are made that don't
- * end in a newline. Initialize it to true, and hold it, in the calling context.
- */
-static std::string LogTimestampStr(const std::string &str, std::atomic_bool *fStartedNewLine)
-{
-    std::string strStamped;
-
-    if (!fLogTimestamps)
-        return str;
-
-    if (*fStartedNewLine) {
-        int64_t nTimeMicros = GetTimeMicros();
-        strStamped = DateTimeStrFormat("%Y-%m-%d %H:%M:%S", nTimeMicros/1000000);
-        if (fLogTimeMicros)
-            strStamped += strprintf(".%06d", nTimeMicros%1000000);
-        int64_t mocktime = GetMockTime();
-        if (mocktime) {
-            strStamped += " (mocktime: " + DateTimeStrFormat("%Y-%m-%d %H:%M:%S", mocktime) + ")";
-        }
-        strStamped += ' ' + str;
-    } else
-        strStamped = str;
-
-    if (!str.empty() && str[str.size()-1] == '\n')
-        *fStartedNewLine = true;
-    else
-        *fStartedNewLine = false;
-
-    return strStamped;
-}
-
-int LogPrintStr(const std::string &str)
-{
-    int ret = 0; // Returns total number of characters written
-    static std::atomic_bool fStartedNewLine(true);
-
-    std::string strTimestamped = LogTimestampStr(str, &fStartedNewLine);
-
-    if (fPrintToConsole)
-    {
-        // print to console
-        ret = fwrite(strTimestamped.data(), 1, strTimestamped.size(), stdout);
-        fflush(stdout);
-    }
-    else if (fPrintToDebugLog)
-    {
-        boost::call_once(&DebugPrintInit, debugPrintInitFlag);
-        boost::mutex::scoped_lock scoped_lock(*mutexDebugLog);
-
-        // buffer if we haven't opened the log yet
-        if (fileout == nullptr) {
-            assert(vMsgsBeforeOpenLog);
-            ret = strTimestamped.length();
-            vMsgsBeforeOpenLog->push_back(strTimestamped);
-        }
-        else
-        {
-            // reopen the log file, if requested
-            if (fReopenDebugLog) {
-                fReopenDebugLog = false;
-                fs::path pathDebug = GetDebugLogPath();
-                if (fsbridge::freopen(pathDebug,"a",fileout) != nullptr)
-                    setbuf(fileout, nullptr); // unbuffered
-            }
-
-            ret = FileWriteStr(strTimestamped, fileout);
-        }
-    }
-    return ret;
-}
-
 /** A map that contains all the currently held directory locks. After
  * successful locking, these will be held here until the global destructor
  * cleans them up and thus automatically unlocks them, or ReleaseDirectoryLocks
@@ -470,31 +231,212 @@ static bool InterpretBool(const std::string& strValue)
     return (atoi(strValue) != 0);
 }
 
-/** Turn -noX into -X=0 */
-static void InterpretNegativeSetting(std::string& strKey, std::string& strValue)
-{
-    if (strKey.length()>3 && strKey[0]=='-' && strKey[1]=='n' && strKey[2]=='o')
+/** Internal helper functions for ArgsManager */
+class ArgsManagerHelper {
+public:
+    typedef std::map<std::string, std::vector<std::string>> MapArgs;
+
+    /** Determine whether to use config settings in the default section,
+     *  See also comments around ArgsManager::ArgsManager() below. */
+    static inline bool UseDefaultSection(const ArgsManager& am, const std::string& arg)
     {
-        strKey = "-" + strKey.substr(3);
-        strValue = InterpretBool(strValue) ? "0" : "1";
+        return (am.m_network == CBaseChainParams::MAIN || am.m_network_only_args.count(arg) == 0);
+    }
+
+    /** Convert regular argument into the network-specific setting */
+    static inline std::string NetworkArg(const ArgsManager& am, const std::string& arg)
+    {
+        assert(arg.length() > 1 && arg[0] == '-');
+        return "-" + am.m_network + "." + arg.substr(1);
+    }
+
+    /** Find arguments in a map and add them to a vector */
+    static inline void AddArgs(std::vector<std::string>& res, const MapArgs& map_args, const std::string& arg)
+    {
+        auto it = map_args.find(arg);
+        if (it != map_args.end()) {
+            res.insert(res.end(), it->second.begin(), it->second.end());
+        }
+    }
+
+    /** Return true/false if an argument is set in a map, and also
+     *  return the first (or last) of the possibly multiple values it has
+     */
+    static inline std::pair<bool,std::string> GetArgHelper(const MapArgs& map_args, const std::string& arg, bool getLast = false)
+    {
+        auto it = map_args.find(arg);
+
+        if (it == map_args.end() || it->second.empty()) {
+            return std::make_pair(false, std::string());
+        }
+
+        if (getLast) {
+            return std::make_pair(true, it->second.back());
+        } else {
+            return std::make_pair(true, it->second.front());
+        }
+    }
+
+    /* Get the string value of an argument, returning a pair of a boolean
+     * indicating the argument was found, and the value for the argument
+     * if it was found (or the empty string if not found).
+     */
+    static inline std::pair<bool,std::string> GetArg(const ArgsManager &am, const std::string& arg)
+    {
+        LOCK(am.cs_args);
+        std::pair<bool,std::string> found_result(false, std::string());
+
+        // We pass "true" to GetArgHelper in order to return the last
+        // argument value seen from the command line (so "bitcoind -foo=bar
+        // -foo=baz" gives GetArg(am,"foo")=={true,"baz"}
+        found_result = GetArgHelper(am.m_override_args, arg, true);
+        if (found_result.first) {
+            return found_result;
+        }
+
+        // But in contrast we return the first argument seen in a config file,
+        // so "foo=bar \n foo=baz" in the config file gives
+        // GetArg(am,"foo")={true,"bar"}
+        if (!am.m_network.empty()) {
+            found_result = GetArgHelper(am.m_config_args, NetworkArg(am, arg));
+            if (found_result.first) {
+                return found_result;
+            }
+        }
+
+        if (UseDefaultSection(am, arg)) {
+            found_result = GetArgHelper(am.m_config_args, arg);
+            if (found_result.first) {
+                return found_result;
+            }
+        }
+
+        return found_result;
+    }
+
+    /* Special test for -testnet and -regtest args, because we
+     * don't want to be confused by craziness like "[regtest] testnet=1"
+     */
+    static inline bool GetNetBoolArg(const ArgsManager &am, const std::string& net_arg)
+    {
+        std::pair<bool,std::string> found_result(false,std::string());
+        found_result = GetArgHelper(am.m_override_args, net_arg, true);
+        if (!found_result.first) {
+            found_result = GetArgHelper(am.m_config_args, net_arg, true);
+            if (!found_result.first) {
+                return false; // not set
+            }
+        }
+        return InterpretBool(found_result.second); // is set, so evaluate
+    }
+};
+
+/**
+ * Interpret -nofoo as if the user supplied -foo=0.
+ *
+ * This method also tracks when the -no form was supplied, and if so,
+ * checks whether there was a double-negative (-nofoo=0 -> -foo=1).
+ *
+ * If there was not a double negative, it removes the "no" from the key,
+ * and returns true, indicating the caller should clear the args vector
+ * to indicate a negated option.
+ *
+ * If there was a double negative, it removes "no" from the key, sets the
+ * value to "1" and returns false.
+ *
+ * If there was no "no", it leaves key and value untouched and returns
+ * false.
+ *
+ * Where an option was negated can be later checked using the
+ * IsArgNegated() method. One use case for this is to have a way to disable
+ * options that are not normally boolean (e.g. using -nodebuglogfile to request
+ * that debug log output is not sent to any file at all).
+ */
+static bool InterpretNegatedOption(std::string& key, std::string& val)
+{
+    assert(key[0] == '-');
+
+    size_t option_index = key.find('.');
+    if (option_index == std::string::npos) {
+        option_index = 1;
+    } else {
+        ++option_index;
+    }
+    if (key.substr(option_index, 2) == "no") {
+        bool bool_val = InterpretBool(val);
+        key.erase(option_index, 2);
+        if (!bool_val ) {
+            // Double negatives like -nofoo=0 are supported (but discouraged)
+            LogPrintf("Warning: parsed potentially confusing double-negative %s=%s\n", key, val);
+            val = "1";
+        } else {
+            return true;
+        }
+    }
+    return false;
+}
+
+ArgsManager::ArgsManager() :
+    /* These options would cause cross-contamination if values for
+     * mainnet were used while running on regtest/testnet (or vice-versa).
+     * Setting them as section_only_args ensures that sharing a config file
+     * between mainnet and regtest/testnet won't cause problems due to these
+     * parameters by accident. */
+    m_network_only_args{
+      "-addnode", "-connect",
+      "-port", "-bind",
+      "-rpcport", "-rpcbind",
+      "-wallet",
+    }
+{
+    // nothing to do
+}
+
+void ArgsManager::WarnForSectionOnlyArgs()
+{
+    // if there's no section selected, don't worry
+    if (m_network.empty()) return;
+
+    // if it's okay to use the default section for this network, don't worry
+    if (m_network == CBaseChainParams::MAIN) return;
+
+    for (const auto& arg : m_network_only_args) {
+        std::pair<bool, std::string> found_result;
+
+        // if this option is overridden it's fine
+        found_result = ArgsManagerHelper::GetArgHelper(m_override_args, arg);
+        if (found_result.first) continue;
+
+        // if there's a network-specific value for this option, it's fine
+        found_result = ArgsManagerHelper::GetArgHelper(m_config_args, ArgsManagerHelper::NetworkArg(*this, arg));
+        if (found_result.first) continue;
+
+        // if there isn't a default value for this option, it's fine
+        found_result = ArgsManagerHelper::GetArgHelper(m_config_args, arg);
+        if (!found_result.first) continue;
+
+        // otherwise, issue a warning
+        LogPrintf("Warning: Config setting for %s only applied on %s network when in [%s] section.\n", arg, m_network, m_network);
     }
 }
 
-void ArgsManager::ParseParameters(int argc, const char* const argv[])
+void ArgsManager::SelectConfigNetwork(const std::string& network)
+{
+    m_network = network;
+}
+
+bool ArgsManager::ParseParameters(int argc, const char* const argv[], std::string& error)
 {
     LOCK(cs_args);
-    mapArgs.clear();
-    mapMultiArgs.clear();
+    m_override_args.clear();
 
-    for (int i = 1; i < argc; i++)
-    {
-        std::string str(argv[i]);
-        std::string strValue;
-        size_t is_index = str.find('=');
-        if (is_index != std::string::npos)
-        {
-            strValue = str.substr(is_index+1);
-            str = str.substr(0, is_index);
+    for (int i = 1; i < argc; i++) {
+        std::string key(argv[i]);
+        std::string val;
+        size_t is_index = key.find('=');
+        if (is_index != std::string::npos) {
+            val = key.substr(is_index + 1);
+            key.erase(is_index);
         }
 #ifdef WIN32
         boost::to_lower(str);
@@ -511,46 +453,115 @@ void ArgsManager::ParseParameters(int argc, const char* const argv[])
             str = str.substr(1);
         InterpretNegativeSetting(str, strValue);
 
-        mapArgs[str] = strValue;
-        mapMultiArgs[str].push_back(strValue);
+        // Check for -nofoo
+        if (InterpretNegatedOption(key, val)) {
+            m_override_args[key].clear();
+        } else {
+            m_override_args[key].push_back(val);
+        }
+
+        // Check that the arg is known
+        if (!(IsSwitchChar(key[0]) && key.size() == 1)) {
+            if (!IsArgKnown(key)) {
+                error = strprintf("Invalid parameter %s", key.c_str());
+                return false;
+            }
+        }
     }
+
+    // we do not allow -includeconf from command line, so we clear it here
+    auto it = m_override_args.find("-includeconf");
+    if (it != m_override_args.end()) {
+        if (it->second.size() > 0) {
+            for (const auto& ic : it->second) {
+                error += "-includeconf cannot be used from commandline; -includeconf=" + ic + "\n";
+            }
+            return false;
+        }
+    }
+    return true;
+}
+
+bool ArgsManager::IsArgKnown(const std::string& key) const
+{
+    size_t option_index = key.find('.');
+    std::string arg_no_net;
+    if (option_index == std::string::npos) {
+        arg_no_net = key;
+    } else {
+        arg_no_net = std::string("-") + key.substr(option_index + 1, std::string::npos);
+    }
+
+    for (const auto& arg_map : m_available_args) {
+        if (arg_map.second.count(arg_no_net)) return true;
+    }
+    return false;
 }
 
 std::vector<std::string> ArgsManager::GetArgs(const std::string& strArg) const
 {
+    std::vector<std::string> result = {};
+    if (IsArgNegated(strArg)) return result; // special case
+
     LOCK(cs_args);
-    auto it = mapMultiArgs.find(strArg);
-    if (it != mapMultiArgs.end()) return it->second;
-    return {};
+
+    ArgsManagerHelper::AddArgs(result, m_override_args, strArg);
+    if (!m_network.empty()) {
+        ArgsManagerHelper::AddArgs(result, m_config_args, ArgsManagerHelper::NetworkArg(*this, strArg));
+    }
+
+    if (ArgsManagerHelper::UseDefaultSection(*this, strArg)) {
+        ArgsManagerHelper::AddArgs(result, m_config_args, strArg);
+    }
+
+    return result;
 }
 
 bool ArgsManager::IsArgSet(const std::string& strArg) const
 {
+    if (IsArgNegated(strArg)) return true; // special case
+    return ArgsManagerHelper::GetArg(*this, strArg).first;
+}
+
+bool ArgsManager::IsArgNegated(const std::string& strArg) const
+{
     LOCK(cs_args);
-    return mapArgs.count(strArg);
+
+    const auto& ov = m_override_args.find(strArg);
+    if (ov != m_override_args.end()) return ov->second.empty();
+
+    if (!m_network.empty()) {
+        const auto& cfs = m_config_args.find(ArgsManagerHelper::NetworkArg(*this, strArg));
+        if (cfs != m_config_args.end()) return cfs->second.empty();
+    }
+
+    const auto& cf = m_config_args.find(strArg);
+    if (cf != m_config_args.end()) return cf->second.empty();
+
+    return false;
 }
 
 std::string ArgsManager::GetArg(const std::string& strArg, const std::string& strDefault) const
 {
-    LOCK(cs_args);
-    auto it = mapArgs.find(strArg);
-    if (it != mapArgs.end()) return it->second;
+    if (IsArgNegated(strArg)) return "0";
+    std::pair<bool,std::string> found_res = ArgsManagerHelper::GetArg(*this, strArg);
+    if (found_res.first) return found_res.second;
     return strDefault;
 }
 
 int64_t ArgsManager::GetArg(const std::string& strArg, int64_t nDefault) const
 {
-    LOCK(cs_args);
-    auto it = mapArgs.find(strArg);
-    if (it != mapArgs.end()) return atoi64(it->second);
+    if (IsArgNegated(strArg)) return 0;
+    std::pair<bool,std::string> found_res = ArgsManagerHelper::GetArg(*this, strArg);
+    if (found_res.first) return atoi64(found_res.second);
     return nDefault;
 }
 
 bool ArgsManager::GetBoolArg(const std::string& strArg, bool fDefault) const
 {
-    LOCK(cs_args);
-    auto it = mapArgs.find(strArg);
-    if (it != mapArgs.end()) return InterpretBool(it->second);
+    if (IsArgNegated(strArg)) return false;
+    std::pair<bool,std::string> found_res = ArgsManagerHelper::GetArg(*this, strArg);
+    if (found_res.first) return InterpretBool(found_res.second);
     return fDefault;
 }
 
@@ -573,11 +584,101 @@ bool ArgsManager::SoftSetBoolArg(const std::string& strArg, bool fValue)
 void ArgsManager::ForceSetArg(const std::string& strArg, const std::string& strValue)
 {
     LOCK(cs_args);
-    mapArgs[strArg] = strValue;
-    mapMultiArgs[strArg] = {strValue};
+    m_override_args[strArg] = {strValue};
 }
 
+void ArgsManager::AddArg(const std::string& name, const std::string& help, const bool debug_only, const OptionsCategory& cat)
+{
+    // Split arg name from its help param
+    size_t eq_index = name.find('=');
+    if (eq_index == std::string::npos) {
+        eq_index = name.size();
+    }
 
+    std::map<std::string, Arg>& arg_map = m_available_args[cat];
+    auto ret = arg_map.emplace(name.substr(0, eq_index), Arg(name.substr(eq_index, name.size() - eq_index), help, debug_only));
+    assert(ret.second); // Make sure an insertion actually happened
+}
+
+void ArgsManager::AddHiddenArgs(const std::vector<std::string>& names)
+{
+    for (const std::string& name : names) {
+        AddArg(name, "", false, OptionsCategory::HIDDEN);
+    }
+}
+
+std::string ArgsManager::GetHelpMessage() const
+{
+    const bool show_debug = gArgs.GetBoolArg("-help-debug", false);
+
+    std::string usage = "";
+    for (const auto& arg_map : m_available_args) {
+        switch(arg_map.first) {
+            case OptionsCategory::OPTIONS:
+                usage += HelpMessageGroup("Options:");
+                break;
+            case OptionsCategory::CONNECTION:
+                usage += HelpMessageGroup("Connection options:");
+                break;
+            case OptionsCategory::ZMQ:
+                usage += HelpMessageGroup("ZeroMQ notification options:");
+                break;
+            case OptionsCategory::DEBUG_TEST:
+                usage += HelpMessageGroup("Debugging/Testing options:");
+                break;
+            case OptionsCategory::NODE_RELAY:
+                usage += HelpMessageGroup("Node relay options:");
+                break;
+            case OptionsCategory::BLOCK_CREATION:
+                usage += HelpMessageGroup("Block creation options:");
+                break;
+            case OptionsCategory::RPC:
+                usage += HelpMessageGroup("RPC server options:");
+                break;
+            case OptionsCategory::WALLET:
+                usage += HelpMessageGroup("Wallet options:");
+                break;
+            case OptionsCategory::WALLET_DEBUG_TEST:
+                if (show_debug) usage += HelpMessageGroup("Wallet debugging/testing options:");
+                break;
+            case OptionsCategory::CHAINPARAMS:
+                usage += HelpMessageGroup("Chain selection options:");
+                break;
+            case OptionsCategory::GUI:
+                usage += HelpMessageGroup("UI Options:");
+                break;
+            case OptionsCategory::COMMANDS:
+                usage += HelpMessageGroup("Commands:");
+                break;
+            case OptionsCategory::REGISTER_COMMANDS:
+                usage += HelpMessageGroup("Register Commands:");
+                break;
+            default:
+                break;
+        }
+
+        // When we get to the hidden options, stop
+        if (arg_map.first == OptionsCategory::HIDDEN) break;
+
+        for (const auto& arg : arg_map.second) {
+            if (show_debug || !arg.second.m_debug_only) {
+                std::string name;
+                if (arg.second.m_help_param.empty()) {
+                    name = arg.first;
+                } else {
+                    name = arg.first + arg.second.m_help_param;
+                }
+                usage += HelpMessageOpt(name, arg.second.m_help_text);
+            }
+        }
+    }
+    return usage;
+}
+
+bool HelpRequested(const ArgsManager& args)
+{
+    return args.IsArgSet("-?") || args.IsArgSet("-h") || args.IsArgSet("-help");
+}
 
 static const int screenWidth = 79;
 static const int optIndent = 2;
@@ -696,33 +797,167 @@ fs::path GetConfigFile(const std::string& confPath)
     return pathConfigFile;
 }
 
-void ArgsManager::ReadConfigFile(const std::string& confPath)
+static std::string TrimString(const std::string& str, const std::string& pattern)
 {
-    fs::ifstream streamConfig(GetConfigFile(confPath));
-    if (!streamConfig.good())
-        return; // No nix.conf file is OK
+    std::string::size_type front = str.find_first_not_of(pattern);
+    if (front == std::string::npos) {
+        return std::string();
+    }
+    std::string::size_type end = str.find_last_not_of(pattern);
+    return str.substr(front, end - front + 1);
+}
 
-    {
-        LOCK(cs_args);
-        std::set<std::string> setOptions;
-        setOptions.insert("*");
+static bool GetConfigOptions(std::istream& stream, std::string& error, std::vector<std::pair<std::string, std::string>> &options)
+{
+    std::string str, prefix;
+    std::string::size_type pos;
+    int linenr = 1;
+    while (std::getline(stream, str)) {
+        if ((pos = str.find('#')) != std::string::npos) {
+            str = str.substr(0, pos);
+        }
+        const static std::string pattern = " \t\r\n";
+        str = TrimString(str, pattern);
+        if (!str.empty()) {
+            if (*str.begin() == '[' && *str.rbegin() == ']') {
+                prefix = str.substr(1, str.size() - 2) + '.';
+            } else if (*str.begin() == '-') {
+                error = strprintf("parse error on line %i: %s, options in configuration file must be specified without leading -", linenr, str);
+                return false;
+            } else if ((pos = str.find('=')) != std::string::npos) {
+                std::string name = prefix + TrimString(str.substr(0, pos), pattern);
+                std::string value = TrimString(str.substr(pos + 1), pattern);
+                options.emplace_back(name, value);
+            } else {
+                error = strprintf("parse error on line %i: %s", linenr, str);
+                if (str.size() >= 2 && str.substr(0, 2) == "no") {
+                    error += strprintf(", if you intended to specify a negated option, use %s=1 instead", str);
+                }
+                return false;
+            }
+        }
+        ++linenr;
+    }
+    return true;
+}
 
-        for (boost::program_options::detail::config_file_iterator it(streamConfig, setOptions), end; it != end; ++it)
-        {
-            // Don't overwrite existing settings so command line settings override nix.conf
-            std::string strKey = std::string("-") + it->string_key;
-            std::string strValue = it->value[0];
-            InterpretNegativeSetting(strKey, strValue);
-            if (mapArgs.count(strKey) == 0)
-                mapArgs[strKey] = strValue;
-            mapMultiArgs[strKey].push_back(strValue);
+bool ArgsManager::ReadConfigStream(std::istream& stream, std::string& error, bool ignore_invalid_keys)
+{
+    LOCK(cs_args);
+    std::vector<std::pair<std::string, std::string>> options;
+    if (!GetConfigOptions(stream, error, options)) {
+        return false;
+    }
+    for (const std::pair<std::string, std::string>& option : options) {
+        std::string strKey = std::string("-") + option.first;
+        std::string strValue = option.second;
+
+        if (InterpretNegatedOption(strKey, strValue)) {
+            m_config_args[strKey].clear();
+        } else {
+            m_config_args[strKey].push_back(strValue);
+        }
+
+        // Check that the arg is known
+        if (!IsArgKnown(strKey)) {
+            if (!ignore_invalid_keys) {
+                error = strprintf("Invalid configuration value %s", option.first.c_str());
+                return false;
+            } else {
+                LogPrintf("Ignoring unknown configuration value %s\n", option.first);
+            }
         }
     }
+    return true;
+}
+
+bool ArgsManager::ReadConfigFiles(std::string& error, bool ignore_invalid_keys)
+{
+    {
+        LOCK(cs_args);
+        m_config_args.clear();
+    }
+
+    const std::string confPath = GetArg("-conf", BITCOIN_CONF_FILENAME);
+    fs::ifstream stream(GetConfigFile(confPath));
+
+    // ok to not have a config file
+    if (stream.good()) {
+        if (!ReadConfigStream(stream, error, ignore_invalid_keys)) {
+            return false;
+        }
+        // if there is an -includeconf in the override args, but it is empty, that means the user
+        // passed '-noincludeconf' on the command line, in which case we should not include anything
+        if (m_override_args.count("-includeconf") == 0) {
+            std::string chain_id = GetChainName();
+            std::vector<std::string> includeconf(GetArgs("-includeconf"));
+            {
+                // We haven't set m_network yet (that happens in SelectParams()), so manually check
+                // for network.includeconf args.
+                std::vector<std::string> includeconf_net(GetArgs(std::string("-") + chain_id + ".includeconf"));
+                includeconf.insert(includeconf.end(), includeconf_net.begin(), includeconf_net.end());
+            }
+
+            // Remove -includeconf from configuration, so we can warn about recursion
+            // later
+            {
+                LOCK(cs_args);
+                m_config_args.erase("-includeconf");
+                m_config_args.erase(std::string("-") + chain_id + ".includeconf");
+            }
+
+            for (const std::string& to_include : includeconf) {
+                fs::ifstream include_config(GetConfigFile(to_include));
+                if (include_config.good()) {
+                    if (!ReadConfigStream(include_config, error, ignore_invalid_keys)) {
+                        return false;
+                    }
+                    LogPrintf("Included configuration file %s\n", to_include.c_str());
+                } else {
+                    error = "Failed to include configuration file " + to_include;
+                    return false;
+                }
+            }
+
+            // Warn about recursive -includeconf
+            includeconf = GetArgs("-includeconf");
+            {
+                std::vector<std::string> includeconf_net(GetArgs(std::string("-") + chain_id + ".includeconf"));
+                includeconf.insert(includeconf.end(), includeconf_net.begin(), includeconf_net.end());
+                std::string chain_id_final = GetChainName();
+                if (chain_id_final != chain_id) {
+                    // Also warn about recursive includeconf for the chain that was specified in one of the includeconfs
+                    includeconf_net = GetArgs(std::string("-") + chain_id_final + ".includeconf");
+                    includeconf.insert(includeconf.end(), includeconf_net.begin(), includeconf_net.end());
+                }
+            }
+            for (const std::string& to_include : includeconf) {
+                fprintf(stderr, "warning: -includeconf cannot be used from included files; ignoring -includeconf=%s\n", to_include.c_str());
+            }
+        }
+    }
+
     // If datadir is changed in .conf file:
     ClearDatadirCache();
     if (!fs::is_directory(GetDataDir(false))) {
-        throw std::runtime_error(strprintf("specified data directory \"%s\" does not exist.", gArgs.GetArg("-datadir", "").c_str()));
+        error = strprintf("specified data directory \"%s\" does not exist.", gArgs.GetArg("-datadir", "").c_str());
+        return false;
     }
+    return true;
+}
+
+std::string ArgsManager::GetChainName() const
+{
+    bool fRegTest = ArgsManagerHelper::GetNetBoolArg(*this, "-regtest");
+    bool fTestNet = ArgsManagerHelper::GetNetBoolArg(*this, "-testnet");
+
+    if (fTestNet && fRegTest)
+        throw std::runtime_error("Invalid combination of -regtest and -testnet.");
+    if (fRegTest)
+        return CBaseChainParams::REGTEST;
+    if (fTestNet)
+        return CBaseChainParams::TESTNET;
+    return CBaseChainParams::MAIN;
 }
 
 #ifndef WIN32
@@ -774,21 +1009,37 @@ bool TryCreateDirectories(const fs::path& p)
     return false;
 }
 
-void FileCommit(FILE *file)
+bool FileCommit(FILE *file)
 {
-    fflush(file); // harmless if redundantly called
+    if (fflush(file) != 0) { // harmless if redundantly called
+        LogPrintf("%s: fflush failed: %d\n", __func__, errno);
+        return false;
+    }
 #ifdef WIN32
     HANDLE hFile = (HANDLE)_get_osfhandle(_fileno(file));
-    FlushFileBuffers(hFile);
+    if (FlushFileBuffers(hFile) == 0) {
+        LogPrintf("%s: FlushFileBuffers failed: %d\n", __func__, GetLastError());
+        return false;
+    }
 #else
     #if defined(__linux__) || defined(__NetBSD__)
-    fdatasync(fileno(file));
-    #elif defined(__APPLE__) && defined(F_FULLFSYNC)
-    fcntl(fileno(file), F_FULLFSYNC, 0);
+    if (fdatasync(fileno(file)) != 0 && errno != EINVAL) { // Ignore EINVAL for filesystems that don't support sync
+        LogPrintf("%s: fdatasync failed: %d\n", __func__, errno);
+        return false;
+    }
+    #elif defined(MAC_OSX) && defined(F_FULLFSYNC)
+    if (fcntl(fileno(file), F_FULLFSYNC, 0) == -1) { // Manpage says "value other than -1" is returned on success
+        LogPrintf("%s: fcntl F_FULLFSYNC failed: %d\n", __func__, errno);
+        return false;
+    }
     #else
-    fsync(fileno(file));
+    if (fsync(fileno(file)) != 0 && errno != EINVAL) {
+        LogPrintf("%s: fsync failed: %d\n", __func__, errno);
+        return false;
+    }
     #endif
 #endif
+    return true;
 }
 
 bool TruncateFile(FILE *file, unsigned int length) {
@@ -857,7 +1108,9 @@ void AllocateFileRange(FILE *file, unsigned int offset, unsigned int length) {
     // Fallback version
     // TODO: just write one byte per block
     static const char buf[65536] = {};
-    fseek(file, offset, SEEK_SET);
+    if (fseek(file, offset, SEEK_SET)) {
+        return;
+    }
     while (length > 0) {
         unsigned int now = 65536;
         if (length < now)
@@ -866,34 +1119,6 @@ void AllocateFileRange(FILE *file, unsigned int offset, unsigned int length) {
         length -= now;
     }
 #endif
-}
-
-void ShrinkDebugFile()
-{
-    // Amount of debug.log to save at end when shrinking (must fit in memory)
-    constexpr size_t RECENT_DEBUG_HISTORY_SIZE = 10 * 1000000;
-    // Scroll debug.log if it's getting too big
-    fs::path pathLog = GetDebugLogPath();
-    FILE* file = fsbridge::fopen(pathLog, "r");
-    // If debug.log file is more than 10% bigger the RECENT_DEBUG_HISTORY_SIZE
-    // trim it down by saving only the last RECENT_DEBUG_HISTORY_SIZE bytes
-    if (file && fs::file_size(pathLog) > 11 * (RECENT_DEBUG_HISTORY_SIZE / 10))
-    {
-        // Restart the file with some of the end
-        std::vector<char> vch(RECENT_DEBUG_HISTORY_SIZE, 0);
-        fseek(file, -((long)vch.size()), SEEK_END);
-        int nBytes = fread(vch.data(), 1, vch.size(), file);
-        fclose(file);
-
-        file = fsbridge::fopen(pathLog, "w");
-        if (file)
-        {
-            fwrite(vch.data(), 1, nBytes, file);
-            fclose(file);
-        }
-    }
-    else if (file != nullptr)
-        fclose(file);
 }
 
 #ifdef WIN32
@@ -1035,220 +1260,16 @@ bool WriteBinaryFileTor(const std::string &filename, const std::string &data)
     return true;
 }
 
-namespace nix
+int ScheduleBatchPriority(void)
 {
-static bool icompare_pred(unsigned char a, unsigned char b)
-{
-    return std::tolower(a) == std::tolower(b);
-};
-static bool icompare_str(const std::string &a, const std::string &b)
-{
-    return a.length() == b.length()
-            && std::equal(b.begin(), b.end(), a.begin(), icompare_pred);
-};
-
-void *memrchr(const void *s, int c, size_t n)
-{
-    if (n < 1)
-        return nullptr;
-
-    unsigned char *cp = (unsigned char*) s + n;
-
-    do {
-        if (*(--cp) == (unsigned char) c)
-            return (void*) cp;
-    } while (--n != 0);
-
-    return nullptr;
-};
-
-// memcmp_nta - memcmp that is secure against timing attacks
-// returns 0 if both areas are equal to each other, non-zero otherwise
-int memcmp_nta(const void *cs, const void *ct, size_t count)
-{
-    const unsigned char *su1, *su2;
-    int res = 0;
-
-    for (su1 = (unsigned char*)cs, su2 = (unsigned char*)ct;
-         0 < count; ++su1, ++su2, count--)
-        res |= (*su1 ^ *su2);
-
-    return res;
-};
-
-void ReplaceStrInPlace(std::string &subject, const std::string search, const std::string replace)
-{
-    size_t pos = 0;
-    while ((pos = subject.find(search, pos)) != std::string::npos)
-    {
-        subject.replace(pos, search.length(), replace);
-        pos += replace.length();
-    };
-};
-
-bool IsStringBoolPositive(const std::string &value)
-{
-    return (value == "+" || value == "1" || icompare_str(value, "on")  || icompare_str(value, "true") || icompare_str(value, "yes") || icompare_str(value, "y"));
-};
-
-bool IsStringBoolNegative(const std::string &value)
-{
-    return (value == "-" || value == "0" || icompare_str(value, "off") || icompare_str(value, "false") || icompare_str(value, "no") || icompare_str(value, "n"));
-};
-
-bool GetStringBool(const std::string &value, bool &fOut)
-{
-    if (IsStringBoolPositive(value))
-    {
-        fOut = true;
-        return true;
-    };
-
-    if (IsStringBoolNegative(value))
-    {
-        fOut = false;
-        return true;
-    };
-
-    return false;
-};
-
-bool IsStrOnlyDigits(const std::string &s)
-{
-    return s.find_first_not_of("0123456789") == std::string::npos;
-};
-
-std::string GetTimeString(int64_t timestamp, char *buffer, size_t nBuffer)
-{
-    struct tm* dt;
-    time_t t = timestamp;
-    dt = localtime(&t);
-
-    strftime(buffer, nBuffer, "%Y-%m-%dT%H:%M:%S%z", dt); // %Z shows long strings on windows
-    return std::string(buffer); // copies the null-terminated character sequence
-};
-
-std::string BytesReadable(uint64_t nBytes)
-{
-    if (nBytes >= 1024ll*1024ll*1024ll*1024ll)
-        return strprintf("%.2f TB", nBytes/1024.0/1024.0/1024.0/1024.0);
-    if (nBytes >= 1024*1024*1024)
-        return strprintf("%.2f GB", nBytes/1024.0/1024.0/1024.0);
-    if (nBytes >= 1024*1024)
-        return strprintf("%.2f MB", nBytes/1024.0/1024.0);
-    if (nBytes >= 1024)
-        return strprintf("%.2f KB", nBytes/1024.0);
-
-    return strprintf("%d B", nBytes);
-};
-
-bool stringsMatchI(const std::string &sString, const std::string &sFind, int type)
-{
-    // case insensitive
-
-    switch (type)
-    {
-    case 0: // full match
-        return sString.length() == sFind.length()
-                && std::equal(sFind.begin(), sFind.end(), sString.begin(), icompare_pred);
-    case 1: // startswith
-        return sString.length() >= sFind.length()
-                && std::equal(sFind.begin(), sFind.end(), sString.begin(), icompare_pred);
-    case 2: // endswith
-        return sString.length() >= sFind.length()
-                && std::equal(sFind.begin(), sFind.end(), sString.begin(), icompare_pred);
-    };
-
-    return 0; // unknown type
-};
-
-std::string AmountToString(CAmount nValue)
-{
-    bool sign = nValue < 0;
-    int64_t n_abs = (sign ? -nValue : nValue);
-    int64_t quotient = n_abs / COIN;
-    int64_t remainder = n_abs % COIN;
-    return strprintf("%s%d.%08d", sign ? "-" : "", quotient, remainder);
-};
-
-std::string &TrimQuotes(std::string &s)
-{
-    if (s.size() < 1)
-        return s;
-    if (s.front() == '"')
-        s.erase(0, 1);
-
-    size_t n = s.size();
-    if (n < 1)
-        return s;
-    if (n > 1 && s[n-2] == '\\') // don't strip \"
-        return s;
-    if (s.back() == '"')
-        s.erase(n - 1);
-    return s;
-};
-
-std::string &TrimWhitespace(std::string &s)
-{
-    LTrimWhitespace(s);
-    RTrimWhitespace(s);
-    return s;
-};
-
-std::string &LTrimWhitespace(std::string &s)
-{
-    std::string::iterator i;
-    for (i = s.begin(); i != s.end(); ++i)
-        if (!std::isspace(*i))
-            break;
-    if (i != s.begin())
-        s.erase(s.begin(), i);
-    return s;
-};
-
-std::string &RTrimWhitespace(std::string &s)
-{
-    std::string::reverse_iterator i;
-    for (i = s.rbegin(); i != s.rend(); ++i)
-        if (!std::isspace(*i))
-            break;
-    if (i != s.rbegin())
-        s.erase(i.base(), s.end());
-    return s;
-};
-
-static int daysInMonth(int year, int month)
-{
-    return month == 2 ? (year % 4 ? 28 : (year % 100 ? 29 : (year % 400 ? 28 : 29))) : ((month - 1) % 7 % 2 ? 30 : 31);
+#ifdef SCHED_BATCH
+    const static sched_param param{0};
+    if (int ret = pthread_setschedparam(pthread_self(), SCHED_BATCH, &param)) {
+        LogPrintf("Failed to pthread_setschedparam: %s\n", strerror(errno));
+        return ret;
+    }
+    return 0;
+#else
+    return 1;
+#endif
 }
-int64_t strToEpoch(const char *input, bool fFillMax)
-{
-    int year, month, day, hours, minutes, seconds;
-    int n = sscanf(input, "%d-%d-%dT%d:%d:%d",
-                   &year, &month, &day, &hours, &minutes, &seconds);
-
-    struct tm tm;
-    memset(&tm, 0, sizeof(tm));
-
-    if (n > 0 && year >= 1970 && year <= 9999)
-        tm.tm_year = year - 1900;
-    if (n > 1 && month > 0 && month < 13)
-        tm.tm_mon = month - 1;          else if (fFillMax) { tm.tm_mon = 11; month = 12; }
-    if (n > 2 && day > 0 && day < 32)
-        tm.tm_mday = day;               else tm.tm_mday = fFillMax ? daysInMonth(year, month) : 1;
-    if (n > 3 && hours >= 0 && hours < 24)
-        tm.tm_hour = hours;             else if (fFillMax) tm.tm_hour = 23;
-    if (n > 4 && minutes >= 0 && minutes < 60)
-        tm.tm_min = minutes;            else if (fFillMax) tm.tm_min = 59;
-    if (n > 5 && seconds >= 0 && seconds < 60)
-        tm.tm_sec = seconds;            else if (fFillMax) tm.tm_sec = 59;
-
-    return (int64_t) mktime(&tm);
-};
-
-bool endsWith(const std::string &str, const std::string &suffix)
-{
-    return str.size() >= suffix.size() &&
-            str.compare(str.size() - suffix.size(), suffix.size(), suffix) == 0;
-};
-} // nix

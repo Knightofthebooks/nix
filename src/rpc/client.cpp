@@ -1,5 +1,5 @@
 // Copyright (c) 2010 Satoshi Nakamoto
-// Copyright (c) 2009-2017 The Bitcoin Core developers
+// Copyright (c) 2009-2018 The Bitcoin Core developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -38,6 +38,7 @@ static const CRPCConvertParam vRPCConvertParams[] =
     { "sendtoaddress", 5 , "replaceable" },
     { "sendtoaddress", 6 , "conf_target" },
     { "settxfee", 0, "amount" },
+    { "sethdseed", 0, "newkeypool" },
     { "getreceivedbyaddress", 1, "minconf" },
     { "getreceivedbyaccount", 1, "minconf" },
     { "listreceivedbyaddress", 0, "minconf" },
@@ -73,6 +74,7 @@ static const CRPCConvertParam vRPCConvertParams[] =
     { "sendmany", 4, "subtractfeefrom" },
     { "sendmany", 5 , "replaceable" },
     { "sendmany", 6 , "conf_target" },
+    { "scantxoutset", 1, "scanobjects" },
     { "addmultisigaddress", 0, "nrequired" },
     { "addmultisigaddress", 1, "keys" },
     { "createmultisig", 0, "nrequired" },
@@ -96,9 +98,26 @@ static const CRPCConvertParam vRPCConvertParams[] =
     { "signrawtransaction", 1, "prevtxs" },
     { "signrawtransaction", 2, "privkeys" },
     { "sendrawtransaction", 1, "allowhighfees" },
+    { "testmempoolaccept", 0, "rawtxs" },
+    { "testmempoolaccept", 1, "allowhighfees" },
     { "combinerawtransaction", 0, "txs" },
     { "fundrawtransaction", 1, "options" },
     { "fundrawtransaction", 2, "iswitness" },
+    { "walletcreatefundedpsbt", 0, "inputs" },
+    { "walletcreatefundedpsbt", 1, "outputs" },
+    { "walletcreatefundedpsbt", 2, "locktime" },
+    { "walletcreatefundedpsbt", 3, "options" },
+    { "walletcreatefundedpsbt", 4, "bip32derivs" },
+    { "walletprocesspsbt", 1, "sign" },
+    { "walletprocesspsbt", 3, "bip32derivs" },
+    { "createpsbt", 0, "inputs" },
+    { "createpsbt", 1, "outputs" },
+    { "createpsbt", 2, "locktime" },
+    { "createpsbt", 3, "replaceable" },
+    { "combinepsbt", 0, "txs"},
+    { "finalizepsbt", 1, "extract"},
+    { "converttopsbt", 1, "permitsigdata"},
+    { "converttopsbt", 2, "iswitness"},
     { "gettxout", 1, "n" },
     { "gettxout", 2, "include_mempool" },
     { "gettxoutproof", 0, "txids" },
@@ -112,6 +131,8 @@ static const CRPCConvertParam vRPCConvertParams[] =
     { "importmulti", 1, "options" },
     { "verifychain", 0, "checklevel" },
     { "verifychain", 1, "nblocks" },
+    { "getblockstats", 0, "hash_or_height" },
+    { "getblockstats", 1, "stats" },
     { "pruneblockchain", 0, "height" },
     { "keypoolrefill", 0, "newsize" },
     { "getrawmempool", 0, "verbose" },
@@ -155,7 +176,7 @@ static const CRPCConvertParam vRPCConvertParams[] =
     { "rescanblockchain", 0, "start_height"},
     { "rescanblockchain", 1, "stop_height"},
     { "getfeeforamount", 0, "amount" },
-
+    { "createwallet", 1, "disable_private_keys"},
     //NIX Privacy functions
     { "setmininput", 0 , "amount"},
     { "ghostamount", 0 , "amount"},

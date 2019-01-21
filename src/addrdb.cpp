@@ -1,5 +1,5 @@
 // Copyright (c) 2009-2010 Satoshi Nakamoto
-// Copyright (c) 2009-2017 The Bitcoin Core developers
+// Copyright (c) 2009-2018 The Bitcoin Core developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -49,7 +49,8 @@ bool SerializeFileDB(const std::string& prefix, const fs::path& path, const Data
 
     // Serialize
     if (!SerializeDB(fileout, data)) return false;
-    FileCommit(fileout.Get());
+    if (!FileCommit(fileout.Get()))
+        return error("%s: Failed to flush file %s", __func__, pathTmp.string());
     fileout.fclose();
 
     // replace existing file, if any, with new file

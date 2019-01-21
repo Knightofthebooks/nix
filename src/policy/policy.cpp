@@ -1,5 +1,5 @@
 // Copyright (c) 2009-2010 Satoshi Nakamoto
-// Copyright (c) 2009-2017 The Bitcoin Core developers
+// Copyright (c) 2009-2018 The Bitcoin Core developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -55,7 +55,7 @@ bool IsDust(const CTxOut& txout, const CFeeRate& dustRelayFeeIn)
     return (txout.nValue < GetDustThreshold(txout, dustRelayFeeIn));
 }
 
-bool IsStandard(const CScript& scriptPubKey, txnouttype& whichType, const bool witnessEnabled)
+bool IsStandard(const CScript& scriptPubKey, txnouttype& whichType)
 {
 
     if (chainActive.Height() >= Params().GetConsensus().nStartGhostFeeDistribution) {
@@ -85,13 +85,10 @@ bool IsStandard(const CScript& scriptPubKey, txnouttype& whichType, const bool w
                (!fAcceptDatacarrier || scriptPubKey.size() > nMaxDatacarrierBytes))
           return false;
 
-    else if (!witnessEnabled && (whichType == TX_WITNESS_V0_KEYHASH || whichType == TX_WITNESS_V0_SCRIPTHASH))
-        return false;
-
     return whichType != TX_NONSTANDARD && whichType != TX_WITNESS_UNKNOWN;
 }
 
-bool IsStandardTx(const CTransaction& tx, std::string& reason, const bool witnessEnabled)
+bool IsStandardTx(const CTransaction& tx, std::string& reason)
 {
     if (tx.nVersion > CTransaction::MAX_STANDARD_VERSION || tx.nVersion < 1) {
         reason = "version";
@@ -103,7 +100,7 @@ bool IsStandardTx(const CTransaction& tx, std::string& reason, const bool witnes
     // computing signature hashes is O(ninputs*txsize). Limiting transactions
     // to MAX_STANDARD_TX_WEIGHT mitigates CPU exhaustion attacks.
     unsigned int sz = GetTransactionWeight(tx);
-    if (sz >= MAX_STANDARD_TX_WEIGHT) {
+    if (sz > MAX_STANDARD_TX_WEIGHT) {
         reason = "tx-size";
         return false;
     }
@@ -137,7 +134,7 @@ bool IsStandardTx(const CTransaction& tx, std::string& reason, const bool witnes
     unsigned int nDataOut = 0;
     txnouttype whichType;
     for (const CTxOut& txout : tx.vout) {
-        if (!::IsStandard(txout.scriptPubKey, whichType, witnessEnabled)) {
+        if (!::IsStandard(txout.scriptPubKey, whichType)) {
             reason = "scriptpubkey";
             return false;
         }
@@ -250,7 +247,7 @@ bool IsWitnessStandard(const CTransaction& tx, const CCoinsViewCache& mapInputs)
             return false;
 
         // Check P2WSH standard limits
-        if (witnessversion == 0 && witnessprogram.size() == 32) {
+        if (witnessversion == 0 && witnessprogram.size() == WITNESS_V0_SCRIPTHASH_SIZE) {
             if (tx.vin[i].scriptWitness.stack.back().size() > MAX_STANDARD_P2WSH_SCRIPT_SIZE)
                 return false;
             size_t sizeWitnessStack = tx.vin[i].scriptWitness.stack.size() - 1;

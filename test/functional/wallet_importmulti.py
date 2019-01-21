@@ -1,16 +1,19 @@
 #!/usr/bin/env python3
-# Copyright (c) 2014-2017 The Bitcoin Core developers
+# Copyright (c) 2014-2018 The Bitcoin Core developers
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
 """Test the importmulti RPC."""
 from test_framework.test_framework import BitcoinTestFramework
-from test_framework.util import *
+from test_framework.util import assert_equal, assert_greater_than, assert_raises_rpc_error
 
 class ImportMultiTest (BitcoinTestFramework):
     def set_test_params(self):
         self.num_nodes = 2
         self.extra_args = [["-addresstype=legacy"], ["-addresstype=legacy"]]
         self.setup_clean_chain = True
+
+    def skip_test_if_missing_module(self):
+        self.skip_if_no_wallet()
 
     def setup_network(self):
         self.setup_nodes()
@@ -37,7 +40,7 @@ class ImportMultiTest (BitcoinTestFramework):
 
         # RPC importmulti -----------------------------------------------
 
-        # Bitcoin Address
+        # Bitcoin Address (implicit non-internal)
         self.log.info("Should import an address")
         address = self.nodes[0].validateaddress(self.nodes[0].getnewaddress())
         result = self.nodes[1].importmulti([{
@@ -95,7 +98,7 @@ class ImportMultiTest (BitcoinTestFramework):
         assert_equal('timestamp' in address_assert, False)
 
 
-        # Address + Public key + !Internal
+        # Address + Public key + !Internal(explicit)
         self.log.info("Should import an address with public key")
         address = self.nodes[0].validateaddress(self.nodes[0].getnewaddress())
         result = self.nodes[1].importmulti([{
@@ -103,7 +106,8 @@ class ImportMultiTest (BitcoinTestFramework):
                 "address": address['address']
             },
             "timestamp": "now",
-            "pubkeys": [ address['pubkey'] ]
+            "pubkeys": [ address['pubkey'] ],
+            "internal": False
         }])
         assert_equal(result[0]['success'], True)
         address_assert = self.nodes[1].validateaddress(address['address'])
@@ -230,7 +234,7 @@ class ImportMultiTest (BitcoinTestFramework):
         sig_address_3 = self.nodes[0].validateaddress(self.nodes[0].getnewaddress())
         multi_sig_script = self.nodes[0].createmultisig(2, [sig_address_1['pubkey'], sig_address_2['pubkey'], sig_address_3['pubkey']])
         self.nodes[1].generate(100)
-        transactionid = self.nodes[1].sendtoaddress(multi_sig_script['address'], 10.00)
+        self.nodes[1].sendtoaddress(multi_sig_script['address'], 10.00)
         self.nodes[1].generate(1)
         timestamp = self.nodes[1].getblock(self.nodes[1].getbestblockhash())['mediantime']
 
@@ -257,7 +261,7 @@ class ImportMultiTest (BitcoinTestFramework):
         sig_address_3 = self.nodes[0].validateaddress(self.nodes[0].getnewaddress())
         multi_sig_script = self.nodes[0].createmultisig(2, [sig_address_1['pubkey'], sig_address_2['pubkey'], sig_address_3['pubkey']])
         self.nodes[1].generate(100)
-        transactionid = self.nodes[1].sendtoaddress(multi_sig_script['address'], 10.00)
+        self.nodes[1].sendtoaddress(multi_sig_script['address'], 10.00)
         self.nodes[1].generate(1)
         timestamp = self.nodes[1].getblock(self.nodes[1].getbestblockhash())['mediantime']
 
@@ -284,7 +288,7 @@ class ImportMultiTest (BitcoinTestFramework):
         sig_address_3 = self.nodes[0].validateaddress(self.nodes[0].getnewaddress())
         multi_sig_script = self.nodes[0].createmultisig(2, [sig_address_1['pubkey'], sig_address_2['pubkey'], sig_address_3['pubkey']])
         self.nodes[1].generate(100)
-        transactionid = self.nodes[1].sendtoaddress(multi_sig_script['address'], 10.00)
+        self.nodes[1].sendtoaddress(multi_sig_script['address'], 10.00)
         self.nodes[1].generate(1)
         timestamp = self.nodes[1].getblock(self.nodes[1].getbestblockhash())['mediantime']
 
@@ -311,7 +315,7 @@ class ImportMultiTest (BitcoinTestFramework):
         sig_address_3 = self.nodes[0].validateaddress(self.nodes[0].getnewaddress())
         multi_sig_script = self.nodes[0].createmultisig(2, [sig_address_1['pubkey'], sig_address_2['pubkey'], sig_address_3['pubkey']])
         self.nodes[1].generate(100)
-        transactionid = self.nodes[1].sendtoaddress(multi_sig_script['address'], 10.00)
+        self.nodes[1].sendtoaddress(multi_sig_script['address'], 10.00)
         self.nodes[1].generate(1)
         timestamp = self.nodes[1].getblock(self.nodes[1].getbestblockhash())['mediantime']
 

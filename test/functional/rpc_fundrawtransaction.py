@@ -1,11 +1,21 @@
 #!/usr/bin/env python3
-# Copyright (c) 2014-2017 The Bitcoin Core developers
+# Copyright (c) 2014-2018 The Bitcoin Core developers
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
 """Test the fundrawtransaction RPC."""
 
+from decimal import Decimal
 from test_framework.test_framework import BitcoinTestFramework
-from test_framework.util import *
+from test_framework.util import (
+    assert_equal,
+    assert_fee_amount,
+    assert_greater_than,
+    assert_greater_than_or_equal,
+    assert_raises_rpc_error,
+    connect_nodes_bi,
+    count_bytes,
+    find_vout_for_address,
+)
 
 
 def get_unspent(listunspent, amount):
@@ -18,6 +28,9 @@ class RawTransactionsTest(BitcoinTestFramework):
     def set_test_params(self):
         self.num_nodes = 4
         self.setup_clean_chain = True
+
+    def skip_test_if_missing_module(self):
+        self.skip_if_no_wallet()
 
     def setup_network(self, split=False):
         self.setup_nodes()
@@ -57,6 +70,11 @@ class RawTransactionsTest(BitcoinTestFramework):
         watchonly_amount = Decimal(200)
         self.nodes[3].importpubkey(watchonly_pubkey, "", True)
         watchonly_txid = self.nodes[0].sendtoaddress(watchonly_address, watchonly_amount)
+
+        # Lock UTXO so nodes[0] doesn't accidentally spend it
+        watchonly_vout = find_vout_for_address(self.nodes[0], watchonly_txid, watchonly_address)
+        self.nodes[0].lockunspent(False, [{"txid": watchonly_txid, "vout": watchonly_vout}])
+
         self.nodes[0].sendtoaddress(self.nodes[3].getnewaddress(), watchonly_amount / 10)
 
         self.nodes[0].sendtoaddress(self.nodes[2].getnewaddress(), 1.5)
@@ -221,7 +239,7 @@ class RawTransactionsTest(BitcoinTestFramework):
         outputs = { self.nodes[0].getnewaddress() : Decimal(4.0) }
         rawtx   = self.nodes[2].createrawtransaction(inputs, outputs)
         assert_raises_rpc_error(-1, "JSON value is not a string as expected", self.nodes[2].fundrawtransaction, rawtx, {'change_type': None})
-        assert_raises_rpc_error(-5, "Unknown change type", self.nodes[2].fundrawtransaction, rawtx, {'change_type': ''})
+        assert_raises_rpc_error(-5, "Unknown change type ''", self.nodes[2].fundrawtransaction, rawtx, {'change_type': ''})
         rawtx = self.nodes[2].fundrawtransaction(rawtx, {'change_type': 'bech32'})
         tx  = self.nodes[2].decoderawtransaction(rawtx['hex'])
         assert_equal('witness_v0_keyhash', tx['vout'][rawtx['changepos']]['scriptPubKey']['type'])
@@ -472,6 +490,9 @@ class RawTransactionsTest(BitcoinTestFramework):
         connect_nodes_bi(self.nodes,1,2)
         connect_nodes_bi(self.nodes,0,2)
         connect_nodes_bi(self.nodes,0,3)
+        # Again lock the watchonly UTXO or nodes[0] may spend it, because
+        # lockunspent is memory-only and thus lost on restart
+        self.nodes[0].lockunspent(False, [{"txid": watchonly_txid, "vout": watchonly_vout}])
         self.sync_all()
 
         # drain the keypool

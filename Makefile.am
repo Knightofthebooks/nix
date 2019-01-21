@@ -18,7 +18,8 @@ endif
 
 NIXD_BIN=$(top_builddir)/src/$(NIX_DAEMON_NAME)$(EXEEXT)
 NIX_QT_BIN=$(top_builddir)/src/qt/$(NIX_GUI_NAME)$(EXEEXT)
-NIX_CLI_BIN=$(top_builddir)/src/$(NIX_CLI_NAME)$(EXEEXT)
+NIXCLI_BIN=$(top_builddir)/src/$(NIX_CLI_NAME)$(EXEEXT)
+NIX_TX_BIN=$(top_builddir)/src/$(NIX_TX_NAME)$(EXEEXT)
 NIX_WIN_INSTALLER=$(PACKAGE)-$(PACKAGE_VERSION)-win$(WINDOWS_BITS)-setup$(EXEEXT)
 
 empty :=
@@ -42,8 +43,7 @@ DIST_CONTRIB = $(top_srcdir)/contrib/nix-cli.bash-completion \
 	       $(top_srcdir)/contrib/nix-tx.bash-completion \
 	       $(top_srcdir)/contrib/nixd.bash-completion \
 	       $(top_srcdir)/contrib/init \
-	       $(top_srcdir)/contrib/install_db4.sh \
-	       $(top_srcdir)/contrib/rpm
+	       $(top_srcdir)/contrib/install_db4.sh
 DIST_SHARE = \
   $(top_srcdir)/share/genbuild.sh \
   $(top_srcdir)/share/rpcauth
@@ -75,6 +75,7 @@ $(NIX_WIN_INSTALLER): all-recursive
 	STRIPPROG="$(STRIP)" $(INSTALL_STRIP_PROGRAM) $(NIXD_BIN) $(top_builddir)/release
 	STRIPPROG="$(STRIP)" $(INSTALL_STRIP_PROGRAM) $(NIX_QT_BIN) $(top_builddir)/release
 	STRIPPROG="$(STRIP)" $(INSTALL_STRIP_PROGRAM) $(NIX_CLI_BIN) $(top_builddir)/release
+	STRIPPROG="$(STRIP)" $(INSTALL_STRIP_PROGRAM) $(NIX_TX_BIN) $(top_builddir)/release
 	@test -f $(MAKENSIS) && $(MAKENSIS) -V2 $(top_builddir)/share/setup.nsi || \
 	  echo error: could not build $@
 	@echo built $@
@@ -95,9 +96,9 @@ $(OSX_APP)/Contents/Resources/nix.icns: $(OSX_INSTALLER_ICONS)
 	$(MKDIR_P) $(@D)
 	$(INSTALL_DATA) $< $@
 
-$(OSX_APP)/Contents/MacOS/NIX-Qt: $(NIX_QT_BIN)
+$(OSX_APP)/Contents/MacOS/NIX-Qt: all-recursive
 	$(MKDIR_P) $(@D)
-	STRIPPROG="$(STRIP)" $(INSTALL_STRIP_PROGRAM)  $< $@
+	STRIPPROG="$(STRIP)" $(INSTALL_STRIP_PROGRAM)  $(BITCOIN_QT_BIN) $@
 
 $(OSX_APP)/Contents/Resources/Base.lproj/InfoPlist.strings:
 	$(MKDIR_P) $(@D)
@@ -166,6 +167,9 @@ $(NIXD_BIN): FORCE
 	$(MAKE) -C src $(@F)
 
 $(NIX_CLI_BIN): FORCE
+	$(MAKE) -C src $(@F)
+
+$(BITCOIN_TX_BIN): FORCE
 	$(MAKE) -C src $(@F)
 
 if USE_LCOV
@@ -269,7 +273,8 @@ EXTRA_DIST += \
     test/util/data/txcreatescript4.json \
     test/util/data/txcreatesignv1.hex \
     test/util/data/txcreatesignv1.json \
-    test/util/data/txcreatesignv2.hex
+    test/util/data/txcreatesignv2.hex \
+    test/util/rpcauth-test.py
 
 CLEANFILES = $(OSX_DMG) $(NIX_WIN_INSTALLER)
 

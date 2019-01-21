@@ -44,7 +44,7 @@ This allows for running nixd without having to do any manual configuration.
 relative to the data directory. `wallet` *only* supports relative paths.
 
 For an example configuration file that describes the configuration settings,
-see `contrib/debian/examples/nix.conf`.
+see `share/examples/nix.conf`.
 
 Paths
 ---------------------------------
@@ -65,7 +65,7 @@ reasons to make the configuration file and data directory only readable by the
 nix user and group.  Access to nix-cli and other nixd rpc clients
 can then be controlled by group membership.
 
-### Mac OS X
+### macOS
 
 Binary:              `/usr/local/bin/nixd`  
 Configuration file:  `~/Library/Application Support/Nix/nix.conf`  
@@ -107,7 +107,7 @@ Using this script, you can adjust the path and flags to the nixd program by
 setting the nixd and FLAGS environment variables in the file
 /etc/sysconfig/nixd. You can also use the DAEMONOPTS environment variable here.
 
-### Mac OS X
+### macOS
 
 Copy org.nix.nixd.plist into ~/Library/LaunchAgents. Load the launch agent by
 running `launchctl load ~/Library/LaunchAgents/org.nix.nixd.plist`.

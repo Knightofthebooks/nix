@@ -15,25 +15,27 @@ bench_bench_nix_SOURCES = \
   bench/bench_nix.cpp \
   bench/bench.cpp \
   bench/bench.h \
+  bench/block_assemble.cpp \
   bench/checkblock.cpp \
   bench/checkqueue.cpp \
-  bench/Examples.cpp \
+  bench/examples.cpp \
   bench/rollingbloom.cpp \
   bench/crypto_hash.cpp \
   bench/ccoins_caching.cpp \
+  bench/merkle_root.cpp \
   bench/mempool_eviction.cpp \
   bench/verify_script.cpp \
   bench/base58.cpp \
+  bench/bech32.cpp \
   bench/lockedpool.cpp \
-  bench/perf.cpp \
-  bench/perf.h \
-  bench/prevector_destructor.cpp
+  bench/prevector.cpp
 
 nodist_bench_bench_nix_SOURCES = $(GENERATED_BENCH_FILES)
 
 bench_bench_nix_CPPFLAGS = $(AM_CPPFLAGS) $(NIX_INCLUDES) $(EVENT_CLFAGS) $(EVENT_PTHREADS_CFLAGS) -I$(builddir)/bench/
 bench_bench_nix_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
 bench_bench_nix_LDADD = \
+  $(LIBNIX_WALLET) \
   $(LIBNIX_SERVER) \
   $(LIBNIX_COMMON) \
   $(LIBNIX_UTIL) \

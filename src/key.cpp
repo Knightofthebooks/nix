@@ -1,4 +1,4 @@
-// Copyright (c) 2009-2017 The Bitcoin Core developers
+// Copyright (c) 2009-2018 The Bitcoin Core developers
 // Copyright (c) 2017 The Zcash developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
@@ -190,24 +190,20 @@ CPubKey CKey::GetPubKey() const {
     return result;
 }
 
-uint256 CKey::ECDH(const CPubKey& pubkey) const {
-    assert(fValid);
-    uint256 result;
-    secp256k1_pubkey pkey;
-    assert(secp256k1_ec_pubkey_parse(secp256k1_context_sign, &pkey, pubkey.begin(), pubkey.size()));
-    assert(secp256k1_ecdh(secp256k1_context_sign, result.begin(), &pkey, begin()));
-    return result;
+// Check that the sig has a low R value and will be less than 71 bytes
+bool SigHasLowR(const secp256k1_ecdsa_signature* sig)
+{
+    unsigned char compact_sig[64];
+    secp256k1_ecdsa_signature_serialize_compact(secp256k1_context_sign, compact_sig, sig);
+
+    // In DER serialization, all values are interpreted as big-endian, signed integers. The highest bit in the integer indicates
+    // its signed-ness; 0 is positive, 1 is negative. When the value is interpreted as a negative integer, it must be converted
+    // to a positive value by prepending a 0x00 byte so that the highest bit is 0. We can avoid this prepending by ensuring that
+    // our highest bit is always 0, and thus we must check that the first byte is less than 0x80.
+    return compact_sig[0] < 0x80;
 }
 
-CKey CKey::Add(const uint8_t *p) const {
-    assert(fValid);
-    CKey result = *this;
-    if (!secp256k1_ec_privkey_tweak_add(secp256k1_context_sign, result.begin_nc(), p))
-        result.SetFlags(false, true);
-    return result;
-}
-
-bool CKey::Sign(const uint256 &hash, std::vector<unsigned char>& vchSig, uint32_t test_case) const {
+bool CKey::Sign(const uint256 &hash, std::vector<unsigned char>& vchSig, bool grind, uint32_t test_case) const {
     if (!fValid)
         return false;
     vchSig.resize(CPubKey::SIGNATURE_SIZE);
@@ -215,7 +211,14 @@ bool CKey::Sign(const uint256 &hash, std::vector<unsigned char>& vchSig, uint32_
     unsigned char extra_entropy[32] = {0};
     WriteLE32(extra_entropy, test_case);
     secp256k1_ecdsa_signature sig;
-    int ret = secp256k1_ecdsa_sign(secp256k1_context_sign, &sig, hash.begin(), begin(), secp256k1_nonce_function_rfc6979, test_case ? extra_entropy : nullptr);
+    uint32_t counter = 0;
+    int ret = secp256k1_ecdsa_sign(secp256k1_context_sign, &sig, hash.begin(), begin(), secp256k1_nonce_function_rfc6979, (!grind && test_case) ? extra_entropy : nullptr);
+
+    // Grind for low R
+    while (ret && !SigHasLowR(&sig) && grind) {
+        WriteLE32(extra_entropy, ++counter);
+        ret = secp256k1_ecdsa_sign(secp256k1_context_sign, &sig, hash.begin(), begin(), secp256k1_nonce_function_rfc6979, extra_entropy);
+    }
     assert(ret);
     secp256k1_ecdsa_signature_serialize_der(secp256k1_context_sign, (unsigned char*)vchSig.data(), &nSigLen, &sig);
     vchSig.resize(nSigLen);
@@ -316,7 +319,7 @@ bool CExtKey::Derive(CExtKey &out, unsigned int nChild) const {
     return key.Derive(out.key, out.chaincode, _nChild, chaincode);
 }
 
-void CExtKey::SetMaster(const unsigned char *seed, unsigned int nSeedLen) {
+void CExtKey::SetSeed(const unsigned char *seed, unsigned int nSeedLen) {
     static const unsigned char hashkey[] = {'B','i','t','c','o','i','n',' ','s','e','e','d'};
     std::vector<unsigned char, secure_allocator<unsigned char>> vout(64);
     CHMAC_SHA512(hashkey, sizeof(hashkey)).Write(seed, nSeedLen).Finalize(vout.data());

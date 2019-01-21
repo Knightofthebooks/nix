@@ -1,5 +1,5 @@
 // Copyright (c) 2009-2010 Satoshi Nakamoto
-// Copyright (c) 2009-2017 The Bitcoin Core developers
+// Copyright (c) 2009-2018 The Bitcoin Core developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -28,6 +28,7 @@ enum SafeChars
     SAFE_CHARS_DEFAULT, //!< The full set of allowed chars
     SAFE_CHARS_UA_COMMENT, //!< BIP-0014 subset
     SAFE_CHARS_FILENAME, //!< Chars allowed in filenames
+    SAFE_CHARS_URI, //!< Chars allowed in URIs (RFC 3986)
 };
 
 /**
@@ -63,6 +64,16 @@ std::string itostr(int n);
 int64_t atoi64(const char* psz);
 int64_t atoi64(const std::string& str);
 int atoi(const std::string& str);
+
+/**
+ * Tests if the given character is a decimal digit.
+ * @param[in] c     character to test
+ * @return          true if the argument is a decimal digit; otherwise false.
+ */
+constexpr bool IsDigit(char c)
+{
+    return c >= '0' && c <= '9';
+}
 
 /**
  * Convert string to signed 32-bit integer with strict parse error feedback.

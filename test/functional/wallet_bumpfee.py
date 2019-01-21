@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright (c) 2016-2017 The Bitcoin Core developers
+# Copyright (c) 2016-2018 The Bitcoin Core developers
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
 """Test the bumpfee RPC.
@@ -14,16 +14,14 @@ added in the future, they should try to follow the same convention and not
 make assumptions about execution order.
 """
 
-from test_framework.blocktools import send_to_witness
+from decimal import Decimal
+
+from test_framework.blocktools import add_witness_commitment, create_block, create_coinbase, send_to_witness
+from test_framework.messages import BIP125_SEQUENCE_NUMBER, CTransaction
 from test_framework.test_framework import BitcoinTestFramework
-from test_framework import blocktools
-from test_framework.mininode import CTransaction
-from test_framework.util import *
+from test_framework.util import assert_equal, assert_greater_than, assert_raises_rpc_error, bytes_to_hex_str, connect_nodes_bi, hex_str_to_bytes, sync_mempools
 
 import io
-
-# Sequence number that is BIP 125 opt-in and BIP 68-compliant
-BIP125_SEQUENCE_NUMBER = 0xfffffffd
 
 WALLET_PASSPHRASE = "test"
 WALLET_PASSPHRASE_TIMEOUT = 3600
@@ -33,8 +31,13 @@ class BumpFeeTest(BitcoinTestFramework):
     def set_test_params(self):
         self.num_nodes = 2
         self.setup_clean_chain = True
-        self.extra_args = [["-prematurewitness", "-walletprematurewitness", "-deprecatedrpc=addwitnessaddress", "-walletrbf={}".format(i)]
-                           for i in range(self.num_nodes)]
+        self.extra_args = [[
+            "-deprecatedrpc=addwitnessaddress",
+            "-walletrbf={}".format(i),
+        ] for i in range(self.num_nodes)]
+
+    def skip_test_if_missing_module(self):
+        self.skip_if_no_wallet()
 
     def run_test(self):
         # Encrypt wallet for test_locked_wallet_fails test
@@ -181,7 +184,10 @@ def test_dust_to_fee(rbf_node, dest_address):
     # the bumped tx sets fee=49,900, but it converts to 50,000
     rbfid = spend_one_input(rbf_node, dest_address)
     fulltx = rbf_node.getrawtransaction(rbfid, 1)
-    bumped_tx = rbf_node.bumpfee(rbfid, {"totalFee": 49900})
+    # (32-byte p2sh-pwpkh output size + 148 p2pkh spend estimate) * 10k(discard_rate) / 1000 = 1800
+    # P2SH outputs are slightly "over-discarding" due to the IsDust calculation assuming it will
+    # be spent as a P2PKH.
+    bumped_tx = rbf_node.bumpfee(rbfid, {"totalFee": 50000-1800})
     full_bumped_tx = rbf_node.getrawtransaction(bumped_tx["txid"], 1)
     assert_equal(bumped_tx["fee"], Decimal("0.00050000"))
     assert_equal(len(fulltx["vout"]), 2)
@@ -286,11 +292,11 @@ def submit_block_with_tx(node, tx):
     tip = node.getbestblockhash()
     height = node.getblockcount() + 1
     block_time = node.getblockheader(tip)["mediantime"] + 1
-    block = blocktools.create_block(int(tip, 16), blocktools.create_coinbase(height), block_time)
+    block = create_block(int(tip, 16), create_coinbase(height), block_time)
     block.vtx.append(ctx)
     block.rehash()
     block.hashMerkleRoot = block.calc_merkle_root()
-    blocktools.add_witness_commitment(block)
+    add_witness_commitment(block)
     block.solve()
     node.submitblock(bytes_to_hex_str(block.serialize(True)))
     return block

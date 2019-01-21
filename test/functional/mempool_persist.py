@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright (c) 2014-2017 The Bitcoin Core developers
+# Copyright (c) 2014-2018 The Bitcoin Core developers
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
 """Test mempool persistence.
@@ -35,16 +35,20 @@ Test is as follows:
     node1 can't write to disk.
 
 """
+from decimal import Decimal
 import os
 import time
 
 from test_framework.test_framework import BitcoinTestFramework
-from test_framework.util import *
+from test_framework.util import assert_equal, assert_raises_rpc_error, wait_until
 
 class MempoolPersistTest(BitcoinTestFramework):
     def set_test_params(self):
         self.num_nodes = 3
         self.extra_args = [[], ["-persistmempool=0"], []]
+
+    def skip_test_if_missing_module(self):
+        self.skip_if_no_wallet()
 
     def run_test(self):
         chain_height = self.nodes[0].getblockcount()
@@ -105,13 +109,13 @@ class MempoolPersistTest(BitcoinTestFramework):
         wait_until(lambda: len(self.nodes[1].getrawmempool()) == 5)
 
         self.log.debug("Prevent bitcoind from writing mempool.dat to disk. Verify that `savemempool` fails")
-        # to test the exception we are setting bad permissions on a tmp file called mempool.dat.new
+        # to test the exception we are creating a tmp folder called mempool.dat.new
         # which is an implementation detail that could change and break this test
         mempooldotnew1 = mempooldat1 + '.new'
-        with os.fdopen(os.open(mempooldotnew1, os.O_CREAT, 0o000), 'w'):
-            pass
+        os.mkdir(mempooldotnew1)
         assert_raises_rpc_error(-1, "Unable to dump mempool to disk", self.nodes[1].savemempool)
-        os.remove(mempooldotnew1)
+        os.rmdir(mempooldotnew1)
+
 
 if __name__ == '__main__':
     MempoolPersistTest().main()

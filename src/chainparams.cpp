@@ -1,5 +1,5 @@
 // Copyright (c) 2010 Satoshi Nakamoto
-// Copyright (c) 2009-2016 The Bitcoin Core developers
+// Copyright (c) 2009-2018 The Bitcoin Core developers
 // Copyright (c) 2017-2018 The NIX Core developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
@@ -275,11 +275,10 @@ public:
         };
 
         chainTxData = ChainTxData{
-                //block 108750 (0x22712c14439959794cf3af0340757fa2b746ae06a945e8964264bc4b08d9b6ef)
-            1543963824, // * UNIX timestamp of last known number of transactions
-            137164,  // * total number of transactions between genesis and that timestamp
-                        //   (the tx=... number in the SetBestChain debug.log lines)
-            0.009889085387575334  // * estimated number of transactions per second after that timestamp
+            // Data from rpc: getchaintxstats 4096 0000000000000000002e63058c023a9a1de233554f28c7b21380b6c9003f36a8
+            /* nTime    */ 1543963824,
+            /* nTxCount */ 137164,
+            /* dTxRate  */ 0.009889085387575334
         };
     }
 };
@@ -409,10 +408,10 @@ public:
         };
 
         chainTxData = ChainTxData{
-            // Data as of block 000000000000033cfa3c975eb83ecf2bb4aaedf68e6d279f6ed2b427c64caff9 (height 1260526)
-            1516903490,
-            17082348,
-            0.09
+            // Data from rpc: getchaintxstats 4096 0000000000000037a8cd3e06cd5edbfe9dd1dbcc5dacab279376ef7cfc2b4c75
+            /* nTime    */ 1531929919,
+            /* nTxCount */ 19438708,
+            /* dTxRate  */ 0.626
         };
 
     }

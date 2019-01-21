@@ -96,6 +96,9 @@ public:
     /** Network activity state changed. */
     ADD_SIGNALS_DECL_WRAPPER(NotifyNetworkActiveChanged, void, bool networkActive);
 
+    /** Ask the user whether they want to pay a fee or not. */
+    boost::signals2::signal<bool (int64_t nFeeRequired), boost::signals2::last_value<bool> > ThreadSafeAskFee;
+
     /**
      * Status bar alerts changed.
      */

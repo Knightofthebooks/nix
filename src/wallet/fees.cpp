@@ -46,10 +46,10 @@ CFeeRate GetMinimumFeeRate(const CWallet& wallet, const CCoinControl& coin_contr
     */
     CFeeRate feerate_needed;
     if (coin_control.m_feerate) { // 1.
-        feerate_needed = *(coin_control.m_feerate);
+        fee_needed = coin_control.m_feerate->GetFee(nTxBytes);
         if (feeCalc) feeCalc->reason = FeeReason::PAYTXFEE;
         // Allow to override automatic min/max check over coin control instance
-        if (coin_control.fOverrideFeeRate) return feerate_needed;
+        if (coin_control.fOverrideFeeRate) return fee_needed;
     }
     else if (!coin_control.m_confirm_target && wallet.m_pay_tx_fee != CFeeRate(0)) { // 3. TODO: remove magic value of 0 for wallet member m_pay_tx_fee
         feerate_needed = wallet.m_pay_tx_fee;
@@ -74,9 +74,9 @@ CFeeRate GetMinimumFeeRate(const CWallet& wallet, const CCoinControl& coin_contr
             if (wallet.m_fallback_fee == CFeeRate(0)) return feerate_needed;
         }
         // Obey mempool min fee when using smart fee estimation
-        CFeeRate min_mempool_feerate = pool.GetMinFee(gArgs.GetArg("-maxmempool", DEFAULT_MAX_MEMPOOL_SIZE) * 1000000);
-        if (feerate_needed < min_mempool_feerate) {
-            feerate_needed = min_mempool_feerate;
+        CAmount min_mempool_fee = pool.GetMinFee(gArgs.GetArg("-maxmempool", DEFAULT_MAX_MEMPOOL_SIZE) * 1000000).GetFee(nTxBytes);
+        if (fee_needed < min_mempool_fee) {
+            fee_needed = min_mempool_fee;
             if (feeCalc) feeCalc->reason = FeeReason::MEMPOOL_MIN;
         }
     }
@@ -87,7 +87,12 @@ CFeeRate GetMinimumFeeRate(const CWallet& wallet, const CCoinControl& coin_contr
         feerate_needed = required_feerate;
         if (feeCalc) feeCalc->reason = FeeReason::REQUIRED;
     }
-    return feerate_needed;
+    // But always obey the maximum
+    if (fee_needed > maxTxFee) {
+        fee_needed = maxTxFee;
+        if (feeCalc) feeCalc->reason = FeeReason::MAXTXFEE;
+    }
+    return fee_needed;
 }
 
 CFeeRate GetDiscardRate(const CWallet& wallet, const CBlockPolicyEstimator& estimator)

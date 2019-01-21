@@ -19,6 +19,9 @@ class SendCoinsRecipient;
 class TransactionView;
 class WalletModel;
 class AddressBookPage;
+class GhostVault;
+class GhostNode;
+class DelegatedStaking;
 
 QT_BEGIN_NAMESPACE
 class QModelIndex;
@@ -44,7 +47,6 @@ public:
         The client model represents the part of the core that communicates with the P2P network, and is wallet-agnostic.
     */
     void setClientModel(ClientModel *clientModel);
-    WalletModel *getWalletModel() { return walletModel; }
     /** Set the wallet model.
         The wallet model represents a bitcoin wallet, and offers access to the list of transactions, address book and sending
         functionality.
@@ -65,6 +67,10 @@ private:
     SendCoinsDialog *sendCoinsPage;
     AddressBookPage *usedSendingAddressesPage;
     AddressBookPage *usedReceivingAddressesPage;
+    GhostNode *ghostnodePage;
+    GhostVault *ghostVaultPage;
+    DelegatedStaking *delegatedStakingPage;
+
 
     TransactionView *transactionView;
 
@@ -80,6 +86,9 @@ public Q_SLOTS:
     void gotoReceiveCoinsPage();
     /** Switch to send coins page */
     void gotoSendCoinsPage(QString addr = "");
+    void gotoGhostnodePage();
+    void gotoGhostVaultPage();
+    void gotoDelegatedStakingPage();
 
     /** Show Sign/Verify Message dialog and switch to sign message tab */
     void gotoSignMessageTab(QString addr = "");
@@ -98,7 +107,9 @@ public Q_SLOTS:
     /** Change encrypted wallet passphrase */
     void changePassphrase();
     /** Ask for passphrase to unlock wallet temporarily */
-    void unlockWallet();
+    void unlockWallet(bool iconClicked=false);
+    /** lock wallet */
+    void lockWallet();
 
     /** Show used sending addresses */
     void usedSendingAddresses();
@@ -120,13 +131,17 @@ Q_SIGNALS:
     /**  Fired when a message should be reported to the user */
     void message(const QString &title, const QString &message, unsigned int style);
     /** Encryption status of wallet changed */
-    void encryptionStatusChanged();
+    void encryptionStatusChanged(int status);
     /** HD-Enabled status of wallet changed (only possible during startup) */
-    void hdEnabledStatusChanged();
+    void hdEnabledStatusChanged(int hdEnabled);
     /** Notify that a new transaction appeared */
-    void incomingTransaction(const QString& date, int unit, const CAmount& amount, const QString& type, const QString& address, const QString& label, const QString& walletName);
+    void incomingTransaction(const QString& date, int unit, const CAmount& amount, const QString& type, const QString& address, const QString& label);
     /** Notify that the out of sync warning icon has been pressed */
     void outOfSyncWarningClicked();
+
+public:
+
+    WalletModel* getWalletModel();
 };
 
 #endif // BITCOIN_QT_WALLETVIEW_H

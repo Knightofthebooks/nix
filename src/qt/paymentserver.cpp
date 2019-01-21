@@ -8,14 +8,14 @@
 
 #include <qt/paymentserver.h>
 
-#include <qt/bitcoinunits.h>
+#include <qt/nixunits.h>
 #include <qt/guiutil.h>
 #include <qt/optionsmodel.h>
 
+#include <base58.h>
 #include <chainparams.h>
 #include <interfaces/node.h>
 #include <policy/policy.h>
-#include <key_io.h>
 #include <ui_interface.h>
 #include <util/system.h>
 #include <wallet/wallet.h>
@@ -284,12 +284,7 @@ void PaymentServer::handleURIOrFile(const QString& s)
         return;
     }
 
-    if (s.startsWith("bitcoin://", Qt::CaseInsensitive))
-    {
-        Q_EMIT message(tr("URI handling"), tr("'bitcoin://' is not a valid URI. Use 'bitcoin:' instead."),
-            CClientUIInterface::MSG_ERROR);
-    }
-    else if (s.startsWith(BITCOIN_IPC_PREFIX, Qt::CaseInsensitive)) // bitcoin: URI
+    if (s.startsWith(BITCOIN_IPC_PREFIX, Qt::CaseInsensitive)) // bitcoin: URI
     {
         QUrlQuery uri((QUrl(s)));
         if (uri.hasQueryItem("r")) // payment request URI
@@ -658,6 +653,8 @@ void PaymentServer::fetchPaymentACK(WalletModel* walletModel, const SendCoinsRec
     payment.add_transactions(transaction.data(), transaction.size());
 
     // Create a new refund address, or re-use:
+    QString account = tr("Refund from %1").arg(recipient.authenticatedMerchant);
+    std::string strAccount = account.toStdString();
     CPubKey newKey;
     if (walletModel->wallet().getKeyFromPool(false /* internal */, newKey)) {
         // BIP70 requests encode the scriptPubKey directly, so we are not restricted to address
@@ -788,7 +785,7 @@ bool PaymentServer::verifyExpired(const payments::PaymentDetails& requestDetails
 {
     bool fVerified = (requestDetails.has_expires() && (int64_t)requestDetails.expires() < GetTime());
     if (fVerified) {
-        const QString requestExpires = QString::fromStdString(FormatISO8601DateTime((int64_t)requestDetails.expires()));
+        const QString requestExpires = QString::fromStdString(DateTimeStrFormat("%Y-%m-%d %H:%M:%S", (int64_t)requestDetails.expires()));
         qWarning() << QString("PaymentServer::%1: Payment request expired \"%2\".")
             .arg(__func__)
             .arg(requestExpires);

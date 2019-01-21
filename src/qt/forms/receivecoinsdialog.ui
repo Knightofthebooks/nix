@@ -6,7 +6,7 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>776</width>
+    <width>600</width>
     <height>396</height>
    </rect>
   </property>
@@ -100,6 +100,26 @@
         <item row="7" column="2">
          <layout class="QHBoxLayout" name="horizontalLayout">
           <item>
+           <widget class="QComboBox" name="addressType">
+            <property name="sizePolicy">
+             <sizepolicy hsizetype="Preferred" vsizetype="Fixed">
+              <horstretch>0</horstretch>
+              <verstretch>0</verstretch>
+             </sizepolicy>
+            </property>
+            <item>
+             <property name="text">
+              <string>Standard Address</string>
+             </property>
+            </item>
+            <item>
+             <property name="text">
+              <string>Ghostnode Address</string>
+             </property>
+            </item>
+           </widget>
+          </item>
+          <item>
            <widget class="QPushButton" name="receiveButton">
             <property name="minimumSize">
              <size>
@@ -111,7 +131,7 @@
              <string>&amp;Request payment</string>
             </property>
             <property name="icon">
-             <iconset resource="../bitcoin.qrc">
+             <iconset resource="../nix.qrc">
               <normaloff>:/icons/receiving_addresses</normaloff>:/icons/receiving_addresses</iconset>
             </property>
            </widget>
@@ -131,7 +151,7 @@
              <string>Clear</string>
             </property>
             <property name="icon">
-             <iconset resource="../bitcoin.qrc">
+             <iconset resource="../nix.qrc">
               <normaloff>:/icons/remove</normaloff>:/icons/remove</iconset>
             </property>
             <property name="autoDefault">
@@ -301,7 +321,7 @@
            <string>Show</string>
           </property>
           <property name="icon">
-           <iconset resource="../bitcoin.qrc">
+           <iconset resource="../nix.qrc">
             <normaloff>:/icons/edit</normaloff>:/icons/edit</iconset>
           </property>
           <property name="autoDefault">
@@ -321,7 +341,7 @@
            <string>Remove</string>
           </property>
           <property name="icon">
-           <iconset resource="../bitcoin.qrc">
+           <iconset resource="../nix.qrc">
             <normaloff>:/icons/remove</normaloff>:/icons/remove</iconset>
           </property>
           <property name="autoDefault">
@@ -353,14 +373,13 @@
   <customwidget>
    <class>BitcoinAmountField</class>
    <extends>QLineEdit</extends>
-   <header>qt/bitcoinamountfield.h</header>
+   <header>qt/nixamountfield.h</header>
    <container>1</container>
   </customwidget>
  </customwidgets>
  <tabstops>
   <tabstop>reqLabel</tabstop>
   <tabstop>reqAmount</tabstop>
-  <tabstop>useBech32</tabstop>
   <tabstop>reqMessage</tabstop>
   <tabstop>receiveButton</tabstop>
   <tabstop>clearButton</tabstop>
@@ -369,7 +388,7 @@
   <tabstop>removeRequestButton</tabstop>
  </tabstops>
  <resources>
-  <include location="../bitcoin.qrc"/>
+  <include location="../nix.qrc"/>
  </resources>
  <connections/>
 </ui>

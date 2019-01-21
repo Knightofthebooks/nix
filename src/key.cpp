@@ -12,6 +12,7 @@
 
 #include <secp256k1.h>
 #include <secp256k1_recovery.h>
+#include <secp256k1_ecdh.h>
 
 static secp256k1_context* secp256k1_context_sign = nullptr;
 
@@ -44,17 +45,17 @@ static int ec_privkey_import_der(const secp256k1_context* ctx, unsigned char *ou
     if (end - privkey < 1 || !(*privkey & 0x80u)) {
         return 0;
     }
-    ptrdiff_t lenb = *privkey & ~0x80u; privkey++;
+    size_t lenb = *privkey & ~0x80u; privkey++;
     if (lenb < 1 || lenb > 2) {
         return 0;
     }
-    if (end - privkey < lenb) {
+    if (end - privkey < (unsigned)lenb) {
         return 0;
     }
     /* sequence length */
-    ptrdiff_t len = privkey[lenb-1] | (lenb > 1 ? privkey[lenb-2] << 8 : 0u);
+    size_t len = privkey[lenb-1] | (lenb > 1 ? privkey[lenb-2] << 8 : 0u);
     privkey += lenb;
-    if (end - privkey < len) {
+    if (end - privkey < (unsigned)len) {
         return 0;
     }
     /* sequence element 0: version number (=1) */
@@ -66,9 +67,9 @@ static int ec_privkey_import_der(const secp256k1_context* ctx, unsigned char *ou
     if (end - privkey < 2 || privkey[0] != 0x04u) {
         return 0;
     }
-    ptrdiff_t oslen = privkey[1];
+    size_t oslen = privkey[1];
     privkey += 2;
-    if (oslen > 32 || end - privkey < oslen) {
+    if (oslen > 32 || end - privkey < (unsigned)oslen) {
         return 0;
     }
     memcpy(out32 + (32 - oslen), privkey, oslen);
@@ -219,7 +220,7 @@ bool CKey::Sign(const uint256 &hash, std::vector<unsigned char>& vchSig, bool gr
         ret = secp256k1_ecdsa_sign(secp256k1_context_sign, &sig, hash.begin(), begin(), secp256k1_nonce_function_rfc6979, extra_entropy);
     }
     assert(ret);
-    secp256k1_ecdsa_signature_serialize_der(secp256k1_context_sign, vchSig.data(), &nSigLen, &sig);
+    secp256k1_ecdsa_signature_serialize_der(secp256k1_context_sign, (unsigned char*)vchSig.data(), &nSigLen, &sig);
     vchSig.resize(nSigLen);
     return true;
 }
@@ -246,7 +247,7 @@ bool CKey::SignCompact(const uint256 &hash, std::vector<unsigned char>& vchSig) 
     secp256k1_ecdsa_recoverable_signature sig;
     int ret = secp256k1_ecdsa_sign_recoverable(secp256k1_context_sign, &sig, hash.begin(), begin(), secp256k1_nonce_function_rfc6979, nullptr);
     assert(ret);
-    secp256k1_ecdsa_recoverable_signature_serialize_compact(secp256k1_context_sign, &vchSig[1], &rec, &sig);
+    secp256k1_ecdsa_recoverable_signature_serialize_compact(secp256k1_context_sign, (unsigned char*)&vchSig[1], &rec, &sig);
     assert(ret);
     assert(rec != -1);
     vchSig[0] = 27 + rec + (fCompressed ? 4 : 0);
@@ -285,7 +286,32 @@ bool CKey::Derive(CKey& keyChild, ChainCode &ccChild, unsigned int nChild, const
     return ret;
 }
 
-bool CExtKey::Derive(CExtKey &out, unsigned int _nChild) const {
+bool CKey::Derive(CKey& keyChild, unsigned char ccChild[32], unsigned int nChild, const unsigned char cc[32]) const
+{
+    assert(IsValid());
+    assert(IsCompressed());
+    std::vector<unsigned char, secure_allocator<unsigned char>> vout(64);
+    if ((nChild >> 31) == 0)
+    {
+        CPubKey pubkey = GetPubKey();
+        assert(pubkey.begin() + 33 == pubkey.end());
+        BIP32Hash(cc, nChild, *pubkey.begin(), pubkey.begin()+1, vout.data());
+    } else
+    {
+        assert(begin() + 32 == end());
+        BIP32Hash(cc, nChild, 0, begin(), vout.data());
+    };
+
+    memcpy(ccChild, vout.data()+32, 32);
+    //bool ret = TweakSecret((unsigned char*)keyChild.begin(), begin(), out);
+    memcpy((unsigned char*)keyChild.begin(), begin(), 32);
+    bool ret = secp256k1_ec_privkey_tweak_add(secp256k1_context_sign, (unsigned char*)keyChild.begin(), vout.data());
+    keyChild.fCompressed = true;
+    keyChild.fValid = ret;
+    return ret;
+}
+/*
+bool CExtKey::Derive(CExtKey &out, unsigned int nChild) const {
     out.nDepth = nDepth + 1;
     CKeyID id = key.GetPubKey().GetID();
     memcpy(&out.vchFingerprint[0], &id, 4);
@@ -332,7 +358,7 @@ void CExtKey::Decode(const unsigned char code[BIP32_EXTKEY_SIZE]) {
     memcpy(chaincode.begin(), code+9, 32);
     key.Set(code+42, code+BIP32_EXTKEY_SIZE, true);
 }
-
+*/
 bool ECC_InitSanityCheck() {
     CKey key;
     key.MakeNewKey(true);

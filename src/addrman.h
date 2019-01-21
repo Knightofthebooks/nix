@@ -149,9 +149,6 @@ public:
 //! ... in at least this many days
 #define ADDRMAN_MIN_FAIL_DAYS 7
 
-//! how recent a successful connection should be before we allow an address to be evicted from tried
-#define ADDRMAN_REPLACEMENT_HOURS 4
-
 //! the maximum percentage of nodes to return in a getaddr call
 #define ADDRMAN_GETADDR_MAX_PCT 23
 
@@ -202,9 +199,6 @@ private:
 
     //! last time Good was called (memory only)
     int64_t nLastGood GUARDED_BY(cs);
-
-    //! Holds addrs inserted into tried table that collide with existing entries. Test-before-evict discipline used to resolve these collisions.
-    std::set<int> m_tried_collisions;
 
 protected:
     //! secret key to randomize bucket select with
@@ -534,11 +528,11 @@ public:
     }
 
     //! Mark an entry as accessible.
-    void Good(const CService &addr, bool test_before_evict = true, int64_t nTime = GetAdjustedTime())
+    void Good(const CService &addr, int64_t nTime = GetAdjustedTime())
     {
         LOCK(cs);
         Check();
-        Good_(addr, test_before_evict, nTime);
+        Good_(addr, nTime);
         Check();
     }
 
@@ -549,28 +543,6 @@ public:
         Check();
         Attempt_(addr, fCountFailure, nTime);
         Check();
-    }
-
-    //! See if any to-be-evicted tried table entries have been tested and if so resolve the collisions.
-    void ResolveCollisions()
-    {
-        LOCK(cs);
-        Check();
-        ResolveCollisions_();
-        Check();
-    }
-
-    //! Randomly select an address in tried that another address is attempting to evict.
-    CAddrInfo SelectTriedCollision()
-    {
-        CAddrInfo ret;
-        {
-            LOCK(cs);
-            Check();
-            ret = SelectTriedCollision_();
-            Check();
-        }
-        return ret;
     }
 
     /**

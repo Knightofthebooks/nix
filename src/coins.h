@@ -16,6 +16,9 @@
 
 #include <assert.h>
 #include <stdint.h>
+#include <spentindex.h>
+#include <addressindex.h>
+
 
 #include <unordered_map>
 
@@ -69,7 +72,7 @@ public:
         ::Unserialize(s, VARINT(code));
         nHeight = code >> 1;
         fCoinBase = code & 1;
-        ::Unserialize(s, CTxOutCompressor(out));
+        ::Unserialize(s, REF(CTxOutCompressor(out)));
     }
 
     bool IsSpent() const {
@@ -213,6 +216,10 @@ protected:
 
 public:
     CCoinsViewCache(CCoinsView *baseIn);
+
+    mutable std::vector<std::pair<CAddressIndexKey, CAmount> > addressIndex;
+    mutable std::vector<std::pair<CAddressUnspentKey, CAddressUnspentValue> > addressUnspentIndex;
+    mutable std::vector<std::pair<CSpentIndexKey, CSpentIndexValue> > spentIndex;
 
     /**
      * By deleting the copy constructor, we prevent accidentally using it when one intends to create a cache on top of a base cache.

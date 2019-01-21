@@ -13,6 +13,34 @@
 #include <uint256.h>
 
 static const int SERIALIZE_TRANSACTION_NO_WITNESS = 0x40000000;
+static const int32_t NIX_TXN_VERSION = 2;
+
+//check when POS is activated
+static const uint8_t NIX_BLOCK_VERSION = 3;
+
+enum OutputTypes
+{
+    OUTPUT_NULL             = 0, // marker for CCoinsView (0.14)
+    OUTPUT_STANDARD         = 2,
+    OUTPUT_DATA             = 3,
+    OUTPUT_ZEROCOIN         = 4,
+};
+
+enum TransactionTypes
+{
+    TXN_STANDARD            = 0,
+    TXN_COINBASE            = 1,
+    TXN_ZEROCOIN            = 2,
+    TXN_COINSTAKE           = 3,
+
+};
+
+enum DataOutputTypes
+{
+    DO_NULL                 = 0, // reserved
+    DO_STEALTH              = 1,
+    DO_STEALTH_PREFIX       = 2,
+};
 
 /** An outpoint - a combination of a transaction hash and an index n into its vout */
 class COutPoint
@@ -54,6 +82,7 @@ public:
     }
 
     std::string ToString() const;
+    std::string ToStringShort() const;
 };
 
 /** An input of a transaction.  It contains the location of the previous
@@ -124,6 +153,11 @@ public:
         return !(a == b);
     }
 
+    friend bool operator<(const CTxIn& a, const CTxIn& b)
+    {
+        return a.prevout<b.prevout;
+    }
+
     std::string ToString() const;
 };
 
@@ -135,13 +169,14 @@ class CTxOut
 public:
     CAmount nValue;
     CScript scriptPubKey;
+    int nRounds;
 
     CTxOut()
     {
         SetNull();
     }
 
-    CTxOut(const CAmount& nValueIn, CScript scriptPubKeyIn);
+    CTxOut(const CAmount& nValueIn, CScript scriptPubKeyIn, int nRoundsIn = -10);
 
     ADD_SERIALIZE_METHODS;
 
@@ -155,6 +190,7 @@ public:
     {
         nValue = -1;
         scriptPubKey.clear();
+        nRounds = -10; // an initial value, should be no way to get this by calculations
     }
 
     bool IsNull() const
@@ -162,10 +198,15 @@ public:
         return (nValue == -1);
     }
 
+    bool IsDust() const
+    {
+        return false;
+    }
+
     friend bool operator==(const CTxOut& a, const CTxOut& b)
     {
-        return (a.nValue       == b.nValue &&
-                a.scriptPubKey == b.scriptPubKey);
+        return (a.nValue == b.nValue &&
+                a.scriptPubKey == b.scriptPubKey && a.nRounds == b.nRounds);
     }
 
     friend bool operator!=(const CTxOut& a, const CTxOut& b)
@@ -173,7 +214,12 @@ public:
         return !(a == b);
     }
 
+    friend bool operator<(const CTxOut& a, const CTxOut& b)
+    {
+        return a.nValue < b.nValue || (a.nValue == b.nValue && a.scriptPubKey < b.scriptPubKey);
+    }
     std::string ToString() const;
+    uint256 GetHash() const;
 };
 
 struct CMutableTransaction;
@@ -330,9 +376,35 @@ public:
      */
     unsigned int GetTotalSize() const;
 
+    //checking for POS
+    int GetType() const {
+        return (nVersion >> 8) & 0xFF;
+    }
+
     bool IsCoinBase() const
     {
-        return (vin.size() == 1 && vin[0].prevout.IsNull());
+        return (vin.size() == 1 && vin[0].prevout.IsNull() && (vin[0].scriptSig[0] != OP_ZEROCOINSPEND));
+    }
+
+    bool IsCoinStake() const
+    {
+        return GetType() == TXN_COINSTAKE
+            && vin.size() > 0 && vout.size() > 1;
+    }
+
+    bool IsZerocoinSpend() const
+    {
+        return (vin.size() >= 1 && vin[0].prevout.IsNull() && (vin[0].scriptSig[0] == OP_ZEROCOINSPEND) && (vout.size() == vin.size()) );
+    }
+
+    bool IsZerocoinMint() const
+    {
+        for (std::vector<CTxOut>::const_iterator it(vout.begin()); it != vout.end(); ++it)
+            {
+                if (it -> scriptPubKey.IsZerocoinMint())
+                    return true;
+            }
+            return false;
     }
 
     friend bool operator==(const CTransaction& a, const CTransaction& b)
@@ -385,6 +457,20 @@ struct CMutableTransaction
         Unserialize(s);
     }
 
+    void SetType(int type) {
+        nVersion |= (type & 0xFF) << 8;
+    }
+
+    int GetType() const {
+        return (nVersion >> 8) & 0xFF;
+    }
+
+    bool IsCoinStake() const
+    {
+        return GetType() == TXN_COINSTAKE
+            && vin.size() > 0 && vout.size() > 1;
+    }
+
     /** Compute the hash of this CMutableTransaction. This is computed on the
      * fly, as opposed to GetHash() in CTransaction, which uses a cached result.
      */
@@ -398,6 +484,13 @@ struct CMutableTransaction
             }
         }
         return false;
+    }
+
+    std::string ToString() const;
+
+    friend bool operator!=(const CMutableTransaction& a, const CMutableTransaction& b)
+    {
+        return !(a == b);
     }
 };
 

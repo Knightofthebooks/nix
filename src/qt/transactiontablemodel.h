@@ -5,7 +5,7 @@
 #ifndef BITCOIN_QT_TRANSACTIONTABLEMODEL_H
 #define BITCOIN_QT_TRANSACTIONTABLEMODEL_H
 
-#include <qt/bitcoinunits.h>
+#include <qt/nixunits.h>
 
 #include <QAbstractTableModel>
 #include <QStringList>
@@ -60,6 +60,8 @@ public:
         LabelRole,
         /** Net amount of transaction */
         AmountRole,
+        /** Unique identifier */
+        TxIDRole,
         /** Transaction hash */
         TxHashRole,
         /** Transaction data, hex-encoded */

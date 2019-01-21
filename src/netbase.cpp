@@ -25,7 +25,7 @@
 #include <poll.h>
 #endif
 
-#if !defined(MSG_NOSIGNAL)
+#if !defined(HAVE_MSG_NOSIGNAL)
 #define MSG_NOSIGNAL 0
 #endif
 
@@ -146,7 +146,7 @@ bool Lookup(const char *pszName, std::vector<CService>& vAddr, int portDefault, 
     if (pszName[0] == 0)
         return false;
     int port = portDefault;
-    std::string hostname;
+    std::string hostname = "";
     SplitHostPort(std::string(pszName), port, hostname);
 
     std::vector<CNetAddr> vIP;
@@ -600,7 +600,7 @@ bool HaveNameProxy() {
 bool IsProxy(const CNetAddr &addr) {
     LOCK(cs_proxyInfos);
     for (int i = 0; i < NET_MAX; i++) {
-        if (addr == static_cast<CNetAddr>(proxyInfo[i].proxy))
+        if (addr == (CNetAddr)proxyInfo[i].proxy)
             return true;
     }
     return false;

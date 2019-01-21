@@ -38,6 +38,10 @@
 class CScheduler;
 class CNode;
 
+namespace boost {
+    class thread_group;
+} // namespace boost
+
 /** Time between pings automatically sent out for latency probing and keepalive (in seconds). */
 static const int PING_INTERVAL = 2 * 60;
 /** Time after which to disconnect, after waiting for a ping response (or inactivity). */
@@ -319,6 +323,18 @@ public:
     unsigned int GetReceiveFloodSize() const;
 
     void WakeMessageHandler();
+    void RelayInv(CInv &inv, const int minProtoVersion = MIN_PEER_PROTO_VERSION);
+    std::vector<CNode*> vNodes;
+    mutable CCriticalSection cs_vNodes;
+    CNode* ConnectNode(CAddress addrConnect, const char *pszDest, bool fCountFailure, bool fConnectToGhostnode = false);
+    CNode* FindNode(const CNetAddr& ip);
+    CNode* FindNode(const CSubNet& subNet);
+    CNode* FindNode(const std::string& addrName);
+    CNode* FindNode(const CService& addr);
+    std::vector<CNode *> CopyNodeVector();
+    void ReleaseNodeVector(const std::vector<CNode *> &vecNodes);
+    CAddrMan addrman;
+    CMedianFilter<int> cPeerBlockCounts;
 
     /** Attempts to obfuscate tx time through exponentially distributed emitting.
         Works assuming that a single interval is used.
@@ -354,13 +370,8 @@ private:
 
     uint64_t CalculateKeyedNetGroup(const CAddress& ad) const;
 
-    CNode* FindNode(const CNetAddr& ip);
-    CNode* FindNode(const CSubNet& subNet);
-    CNode* FindNode(const std::string& addrName);
-    CNode* FindNode(const CService& addr);
-
     bool AttemptToEvictConnection();
-    CNode* ConnectNode(CAddress addrConnect, const char *pszDest, bool fCountFailure, bool manual_connection);
+    CNode* ConnectNode(CAddress addrConnect, const char *pszDest, bool fCountFailure, bool manual_connection, bool fConnectToGhostnode);
     bool IsWhitelistedRange(const CNetAddr &addr);
 
     void DeleteNode(CNode* pnode);
@@ -418,7 +429,6 @@ private:
     CCriticalSection cs_vOneShots;
     std::vector<std::string> vAddedNodes GUARDED_BY(cs_vAddedNodes);
     CCriticalSection cs_vAddedNodes;
-    std::vector<CNode*> vNodes;
     std::list<CNode*> vNodesDisconnected;
     mutable CCriticalSection cs_vNodes;
     std::atomic<NodeId> nLastNodeId{0};
@@ -466,10 +476,8 @@ private:
     friend struct CConnmanTest;
 };
 extern std::unique_ptr<CConnman> g_connman;
-void Discover();
-void StartMapPort();
-void InterruptMapPort();
-void StopMapPort();
+void Discover(boost::thread_group& threadGroup);
+void MapPort(bool fUseUPnP);
 unsigned short GetListenPort();
 bool BindListenPort(const CService &bindAddr, std::string& strError, bool fWhitelisted = false);
 
@@ -498,13 +506,6 @@ public:
     virtual bool SendMessages(CNode* pnode) = 0;
     virtual void InitializeNode(CNode* pnode) = 0;
     virtual void FinalizeNode(NodeId id, bool& update_connection_time) = 0;
-
-protected:
-    /**
-     * Protected destructor so that instances can only be deleted by derived classes.
-     * If that restriction is no longer desired, this should be made public and virtual.
-     */
-    ~NetEventsInterface() = default;
 };
 
 enum
@@ -639,6 +640,28 @@ public:
     int readData(const char *pch, unsigned int nBytes);
 };
 
+class SecMsgNode
+{
+public:
+    SecMsgNode()
+    {
+        lastSeen        = 0;
+        lastMatched     = 0;
+        ignoreUntil     = 0;
+        nWakeCounter    = 0;
+        fEnabled        = false;
+    };
+
+    ~SecMsgNode() {};
+
+    CCriticalSection            cs_smsg_net;
+    int64_t                     lastSeen;
+    int64_t                     lastMatched;
+    int64_t                     ignoreUntil;
+    uint32_t                    nWakeCounter;
+    bool                        fEnabled;
+
+};
 
 /** Information about a peer */
 class CNode
@@ -768,6 +791,10 @@ public:
     CNode(const CNode&) = delete;
     CNode& operator=(const CNode&) = delete;
 
+    //Ghostnode
+    bool fGhostnode;
+    SecMsgNode smsgData;
+
 private:
     const NodeId id;
     const uint64_t nLocalHostNonce;
@@ -783,6 +810,7 @@ private:
     // Our address, as reported by the peer
     CService addrLocal GUARDED_BY(cs_addrLocal);
     mutable CCriticalSection cs_addrLocal;
+
 public:
 
     NodeId GetId() const {
@@ -870,6 +898,8 @@ public:
             }
         } else if (inv.type == MSG_BLOCK) {
             vInventoryBlockToSend.push_back(inv.hash);
+        } else {
+            vInventoryToSend.push_back(inv);
         }
     }
 
@@ -894,8 +924,6 @@ public:
     //! Sets the addrName only if it was not previously set
     void MaybeSetAddrName(const std::string& addrNameIn);
 };
-
-
 
 
 

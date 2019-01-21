@@ -10,13 +10,13 @@
 #include <primitives/transaction.h>
 #include <wallet/db.h>
 #include <key.h>
-
+#include "libzerocoin/Zerocoin.h"
 #include <list>
 #include <stdint.h>
 #include <string>
 #include <utility>
 #include <vector>
-
+#include <util.h>
 /**
  * Overview of wallet database classes:
  *
@@ -39,19 +39,21 @@ class CWallet;
 class CWalletTx;
 class uint160;
 class uint256;
+class CZerocoinEntry;
+class CZerocoinSpendEntry;
 
 /** Backend-agnostic database type. */
 using WalletDatabase = BerkeleyDatabase;
 
 /** Error statuses for the wallet database */
-enum class DBErrors
+enum DBErrors
 {
-    LOAD_OK,
-    CORRUPT,
-    NONCRITICAL_ERROR,
-    TOO_NEW,
-    LOAD_FAIL,
-    NEED_REWRITE
+    DB_LOAD_OK,
+    DB_CORRUPT,
+    DB_NONCRITICAL_ERROR,
+    DB_TOO_NEW,
+    DB_LOAD_FAIL,
+    DB_NEED_REWRITE
 };
 
 /* simple HD chain data model */
@@ -168,6 +170,129 @@ public:
     WalletBatch(const WalletBatch&) = delete;
     WalletBatch& operator=(const WalletBatch&) = delete;
 
+    Dbc *GetTxnCursor()
+    {
+        if (!batch.pdb || !batch.activeTxn)
+            return nullptr;
+
+        DbTxn *ptxnid = batch.activeTxn; // call TxnBegin first
+
+        Dbc *pcursor = nullptr;
+        int ret = batch.pdb->cursor(ptxnid, &pcursor, 0);
+        if (ret != 0)
+            return nullptr;
+        return pcursor;
+    }
+
+    Dbc *GetCursor()
+    {
+        return batch.GetCursor();
+    }
+
+    template< typename T>
+    bool Replace(Dbc *pcursor, const T &value)
+    {
+        if (!pcursor)
+            return false;
+
+        if (batch.fReadOnly)
+            assert(!"Replace called on database in read-only mode");
+
+        // Value
+        CDataStream ssValue(SER_DISK, CLIENT_VERSION);
+        ssValue.reserve(10000);
+        ssValue << value;
+        Dbt datValue(&ssValue[0], ssValue.size());
+
+        // Write
+        int ret = pcursor->put(nullptr, &datValue, DB_CURRENT);
+
+        if (ret != 0)
+        {
+            LogPrintf("CursorPut ret %d - %s\n", ret, DbEnv::strerror(ret));
+        }
+        // Clear memory in case it was a private key
+        memset(datValue.get_data(), 0, datValue.get_size());
+
+        return (ret == 0);
+    }
+
+    int ReadAtCursor(Dbc *pcursor, CDataStream &ssKey, CDataStream &ssValue, unsigned int fFlags=DB_NEXT)
+    {
+        // Read at cursor
+        Dbt datKey;
+        memset(&datKey, 0, sizeof(datKey));
+        if (fFlags == DB_SET || fFlags == DB_SET_RANGE || fFlags == DB_GET_BOTH || fFlags == DB_GET_BOTH_RANGE)
+        {
+            datKey.set_data(&ssKey[0]);
+            datKey.set_size(ssKey.size());
+        }
+
+        Dbt datValue;
+        memset(&datValue, 0, sizeof(datValue));
+        if (fFlags == DB_GET_BOTH || fFlags == DB_GET_BOTH_RANGE)
+        {
+            datValue.set_data(&ssValue[0]);
+            datValue.set_size(ssValue.size());
+        }
+        datKey.set_flags(DB_DBT_MALLOC);
+        datValue.set_flags(DB_DBT_MALLOC);
+        int ret = pcursor->get(&datKey, &datValue, fFlags);
+        if (ret != 0)
+            return ret;
+        else if (datKey.get_data() == nullptr || datValue.get_data() == nullptr)
+            return 99999;
+
+        // Convert to streams
+        ssKey.SetType(SER_DISK);
+        ssKey.clear();
+        ssKey.write((char*)datKey.get_data(), datKey.get_size());
+
+        ssValue.SetType(SER_DISK);
+        ssValue.clear();
+        ssValue.write((char*)datValue.get_data(), datValue.get_size());
+
+        // Clear and free memory
+        memset(datKey.get_data(), 0, datKey.get_size());
+        memset(datValue.get_data(), 0, datValue.get_size());
+        free(datKey.get_data());
+        free(datValue.get_data());
+        return 0;
+    }
+
+    int ReadKeyAtCursor(Dbc *pcursor, CDataStream &ssKey, unsigned int fFlags=DB_NEXT)
+    {
+        // Read key at cursor
+        Dbt datKey;
+        memset(&datKey, 0, sizeof(datKey));
+        if (fFlags == DB_SET || fFlags == DB_SET_RANGE)
+        {
+            datKey.set_data(&ssKey[0]);
+            datKey.set_size(ssKey.size());
+        }
+        datKey.set_flags(DB_DBT_MALLOC);
+
+        Dbt datValue;
+        memset(&datValue, 0, sizeof(datValue));
+        datValue.set_flags(DB_DBT_PARTIAL); // don't read data, dlen and doff are 0 after memset
+
+        int ret = pcursor->get(&datKey, &datValue, fFlags);
+        if (ret != 0)
+            return ret;
+        if (datKey.get_data() == nullptr)
+            return 99999;
+
+        // Convert to streams
+        ssKey.SetType(SER_DISK);
+        ssKey.clear();
+        ssKey.write((char*)datKey.get_data(), datKey.get_size());
+
+        // Clear and free memory
+        memset(datKey.get_data(), 0, datKey.get_size());
+        free(datKey.get_data());
+        return 0;
+    }
+
     bool WriteName(const std::string& strAddress, const std::string& strName);
     bool EraseName(const std::string& strAddress);
 
@@ -207,17 +332,17 @@ public:
     DBErrors ZapWalletTx(std::vector<CWalletTx>& vWtx);
     DBErrors ZapSelectTx(std::vector<uint256>& vHashIn, std::vector<uint256>& vHashOut);
     /* Try to (very carefully!) recover wallet database (with a possible key type filter) */
-    static bool Recover(const fs::path& wallet_path, void *callbackDataIn, bool (*recoverKVcallback)(void* callbackData, CDataStream ssKey, CDataStream ssValue), std::string& out_backup_filename);
+    static bool Recover(const std::string& filename, void *callbackDataIn, bool (*recoverKVcallback)(void* callbackData, CDataStream ssKey, CDataStream ssValue), std::string& out_backup_filename);
     /* Recover convenience-function to bypass the key filter callback, called when verify fails, recovers everything */
-    static bool Recover(const fs::path& wallet_path, std::string& out_backup_filename);
+    static bool Recover(const std::string& filename, std::string& out_backup_filename);
     /* Recover filter (used as callback), will only let keys (cryptographical keys) as KV/key-type pass through */
     static bool RecoverKeysOnlyFilter(void *callbackData, CDataStream ssKey, CDataStream ssValue);
     /* Function to determine if a certain KV/key-type is a key (cryptographical key) type */
     static bool IsKeyType(const std::string& strType);
     /* verifies the database environment */
-    static bool VerifyEnvironment(const fs::path& wallet_path, std::string& errorStr);
+    static bool VerifyEnvironment(const std::string& walletFile, const fs::path& walletDir, std::string& errorStr);
     /* verifies the database file */
-    static bool VerifyDatabaseFile(const fs::path& wallet_path, std::string& warningStr, std::string& errorStr);
+    static bool VerifyDatabaseFile(const std::string& walletFile, const fs::path& walletDir, std::string& warningStr, std::string& errorStr);
 
     //! write the hdchain model (external chain child index counter)
     bool WriteHDChain(const CHDChain& chain);
@@ -233,12 +358,31 @@ public:
     bool ReadVersion(int& nVersion);
     //! Write wallet version
     bool WriteVersion(int nVersion);
+
+    bool WriteZerocoinEntry(const CZerocoinEntry& zerocoin);
+    bool EraseZerocoinEntry(const CZerocoinEntry& zerocoin);
+    void ListPubCoin(std::list<CZerocoinEntry>& listPubCoin);
+    void ListCoinSpendSerial(std::list<CZerocoinSpendEntry>& listCoinSpendSerial);
+    bool WriteCoinSpendSerialEntry(const CZerocoinSpendEntry& zerocoinSpend);
+    bool EraseCoinSpendSerialEntry(const CZerocoinSpendEntry& zerocoinSpend);
+    bool WriteZerocoinAccumulator(libzerocoin::Accumulator accumulator, libzerocoin::CoinDenomination denomination, int pubcoinid);
+    bool ReadZerocoinAccumulator(libzerocoin::Accumulator& accumulator, libzerocoin::CoinDenomination denomination, int pubcoinid);
+    // bool EraseZerocoinAccumulator(libzerocoin::Accumulator& accumulator, libzerocoin::CoinDenomination denomination, int pubcoinid);
+
+    bool ReadCalculatedZCBlock(int& height);
+    bool WriteCalculatedZCBlock(int height);
+
+    //Unfilled precomputed zerocoins
+    bool WriteUnloadedZCEntry(const CZerocoinEntry& zerocoin);
+    bool EraseUnloadedZCEntry(const CZerocoinEntry& zerocoin);
+    void ListUnloadedPubCoin(std::list<CZerocoinEntry>& listUnloadedPubCoin);
+
 private:
     BerkeleyBatch m_batch;
     WalletDatabase& m_database;
 };
 
+bool AutoBackupWallet (CWallet* wallet, std::string strWalletFile, std::string& strBackupWarning, std::string& strBackupError);
 //! Compacts BDB state so that wallet.dat is self-contained (if there are changes)
 void MaybeCompactWalletDB();
-
 #endif // BITCOIN_WALLET_WALLETDB_H

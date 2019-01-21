@@ -351,6 +351,29 @@ void GetStrongRandBytes(unsigned char* out, int num)
     memory_cleanse(buf, 64);
 }
 
+void GetStrongRandBytes2(unsigned char* out, int num)
+{
+    assert(num <= 64);
+    CSHA512 hasher;
+    unsigned char buf[64];
+
+    // First source: OpenSSL's RNG
+    RandAddSeedPerfmon();
+    GetRandBytes(buf, 64);
+    hasher.Write(buf, 64);
+
+    // Second source: OS RNG
+    GetOSRand(buf);
+    hasher.Write(buf, 32);
+    GetOSRand(buf);
+    hasher.Write(buf, 32);
+
+    // Produce output
+    hasher.Finalize(buf);
+    memcpy(out, buf, num);
+    memory_cleanse(buf, 64);
+}
+
 uint64_t GetRand(uint64_t nMax)
 {
     if (nMax == 0)
@@ -481,4 +504,42 @@ FastRandomContext& FastRandomContext::operator=(FastRandomContext&& from) noexce
 void RandomInit()
 {
     RDRandInit();
+}
+
+uint32_t insecure_rand_Rz = 11;
+uint32_t insecure_rand_Rw = 11;
+void seed_insecure_rand(bool fDeterministic)
+{
+    // The seed values have some unlikely fixed points which we avoid.
+    if (fDeterministic) {
+        insecure_rand_Rz = insecure_rand_Rw = 11;
+    } else {
+        uint32_t tmp;
+        do {
+            GetRandBytes((unsigned char*)&tmp, 4);
+        } while (tmp == 0 || tmp == 0x9068ffffU);
+        insecure_rand_Rz = tmp;
+        do {
+            GetRandBytes((unsigned char*)&tmp, 4);
+        } while (tmp == 0 || tmp == 0x464fffffU);
+        insecure_rand_Rw = tmp;
+    }
+}
+
+InsecureRand::InsecureRand(bool _fDeterministic)
+        : nRz(11),
+          nRw(11),
+          fDeterministic(_fDeterministic)
+{
+    // The seed values have some unlikely fixed points which we avoid.
+    if(fDeterministic) return;
+    uint32_t nTmp;
+    do {
+        GetRandBytes((unsigned char*)&nTmp, 4);
+    } while (nTmp == 0 || nTmp == 0x9068ffffU);
+    nRz = nTmp;
+    do {
+        GetRandBytes((unsigned char*)&nTmp, 4);
+    } while (nTmp == 0 || nTmp == 0x464fffffU);
+    nRw = nTmp;
 }

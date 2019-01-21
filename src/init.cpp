@@ -1,10 +1,11 @@
 // Copyright (c) 2009-2010 Satoshi Nakamoto
 // Copyright (c) 2009-2018 The Bitcoin Core developers
+// Copyright (c) 2017-2018 The NIX Core developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #if defined(HAVE_CONFIG_H)
-#include <config/bitcoin-config.h>
+#include <config/nix-config.h>
 #endif
 
 #include <init.h>
@@ -46,8 +47,11 @@
 #include <util/system.h>
 #include <util/moneystr.h>
 #include <validationinterface.h>
+#ifdef ENABLE_WALLET
+#include <wallet/init.h>
+#endif
+#include <pos/miner.h>
 #include <warnings.h>
-#include <walletinitinterface.h>
 #include <stdint.h>
 #include <stdio.h>
 
@@ -57,10 +61,30 @@
 #endif
 
 #include <boost/algorithm/string/classification.hpp>
+#include <boost/algorithm/string/predicate.hpp>
 #include <boost/algorithm/string/replace.hpp>
 #include <boost/algorithm/string/split.hpp>
 #include <boost/thread.hpp>
 #include <openssl/crypto.h>
+#include <sys/stat.h>
+#include <boost/optional.hpp>
+#include <boost/thread.hpp>
+#include <event2/bufferevent.h>
+#include <event2/buffer.h>
+#include <event2/util.h>
+#include <event2/event.h>
+#include <event2/thread.h>
+
+#include "ghostnode/activeghostnode.h"
+#include "ghostnode/darksend.h"
+#include "ghostnode/ghostnode-payments.h"
+#include "ghostnode/ghostnode-sync.h"
+#include "ghostnode/ghostnodeman.h"
+#include "ghostnode/ghostnodeconfig.h"
+#include "ghostnode/netfulfilledman.h"
+#include "ghostnode/instantx.h"
+#include "ghostnode/spork.h"
+#include "ghostnode/flat-database.h"
 
 #if ENABLE_ZMQ
 #include <zmq/zmqabstractnotifier.h>
@@ -87,6 +111,122 @@ std::unique_ptr<PeerLogicValidation> peerLogic;
 
 static const char* FEE_ESTIMATES_FILENAME="fee_estimates.dat";
 
+
+//TOR support related
+
+namespace fs = boost::filesystem;
+
+extern const char tor_git_revision[];
+const char tor_git_revision[] = "";
+
+
+extern "C" {
+    int tor_main(int argc, char *argv[]);
+    void tor_cleanup(void);
+}
+
+
+static char *convert_str(const std::string &s) {
+    char *pc = new char[s.size()+1];
+    std::strcpy(pc, s.c_str());
+    return pc;
+}
+
+void RunTor(){
+    printf("TOR thread started.\n");
+
+    boost::optional < std::string > clientTransportPlugin;
+    struct stat sb;
+    if ((stat("obfs4proxy", &sb) == 0 && sb.st_mode & S_IXUSR)
+            || !std::system("which obfs4proxy")) {
+        clientTransportPlugin = "obfs4 exec obfs4proxy";
+    } else if (stat("obfs4proxy.exe", &sb) == 0 && sb.st_mode & S_IXUSR) {
+        clientTransportPlugin = "obfs4 exec obfs4proxy.exe";
+    }
+
+    fs::path tor_dir = GetDataDir() / "tor";
+    fs::create_directory(tor_dir);
+    fs::path log_file = tor_dir / "tor.log";
+
+    std::vector < std::string > argv;
+    argv.push_back("tor");
+    argv.push_back("--Log");
+    argv.push_back("notice file " + log_file.string());
+    argv.push_back("--SocksPort");
+    argv.push_back("9050");
+    argv.push_back("--ignore-missing-torrc");
+    argv.push_back("-f");
+    argv.push_back((tor_dir / "torrc").string());
+    argv.push_back("--HiddenServiceDir");
+    argv.push_back((tor_dir / "onion").string());
+    argv.push_back("--HiddenServicePort");
+    argv.push_back("6214");
+
+    if (clientTransportPlugin) {
+        printf("Using OBFS4.\n");
+        argv.push_back("--ClientTransportPlugin");
+        argv.push_back(*clientTransportPlugin);
+        argv.push_back("--UseBridges");
+        argv.push_back("1");
+    } else {
+        printf("No OBFS4 found, not using it.\n");
+    }
+
+    std::vector<char *> argv_c;
+    std::transform(argv.begin(), argv.end(), std::back_inserter(argv_c),
+            convert_str);
+
+    //TODO: linking error for linux&windows, order in makefile
+    tor_main(argv_c.size(), &argv_c[0]);
+
+}
+
+
+struct event_base *baseTor;
+boost::thread torEnabledThread;
+
+static void TorEnabledThread()
+{
+    RunTor();
+    event_base_dispatch(baseTor);
+}
+
+
+void StartTorEnabled(boost::thread_group& threadGroup, CScheduler& scheduler)
+{
+    assert(!baseTor);
+#ifdef WIN32
+    evthread_use_windows_threads();
+#else
+    evthread_use_pthreads();
+#endif
+    baseTor = event_base_new();
+    if (!baseTor) {
+        LogPrintf("tor: Unable to create event_base\n");
+        return;
+    }
+
+    torEnabledThread = boost::thread(boost::bind(&TraceThread<void (*)()>, "torcontrol", &TorEnabledThread));
+}
+
+void InterruptTorEnabled()
+{
+    if (baseTor) {
+        LogPrintf("tor: Thread interrupt\n");
+        event_base_loopbreak(baseTor);
+    }
+}
+
+void StopTorEnabled()
+{
+    if (baseTor) {
+        torEnabledThread.join();
+        event_base_free(baseTor);
+        baseTor = 0;
+    }
+}
+
+
 //////////////////////////////////////////////////////////////////////////////
 //
 // Shutdown
@@ -111,6 +251,18 @@ static const char* FEE_ESTIMATES_FILENAME="fee_estimates.dat";
 // ShutdownRequested() getting set, and then does the normal Qt
 // shutdown thing.
 //
+
+std::atomic<bool> fRequestShutdown(false);
+std::atomic<bool> fDumpMempoolLater(false);
+
+void StartShutdown()
+{
+    fRequestShutdown = true;
+}
+bool ShutdownRequested()
+{
+    return fRequestShutdown;
+}
 
 /**
  * This is a minimally invasive approach to shutdown on LevelDB read errors from the
@@ -150,7 +302,6 @@ void Interrupt()
     InterruptRPC();
     InterruptREST();
     InterruptTorControl();
-    InterruptMapPort();
     if (g_connman)
         g_connman->Interrupt();
     if (g_txindex) {
@@ -170,13 +321,18 @@ void Shutdown(InitInterfaces& interfaces)
     /// for example if the data directory was found to be locked.
     /// Be sure that anything that writes files or flushes caches only does this if the respective
     /// module was initialized.
-    RenameThread("bitcoin-shutoff");
+    RenameThread("nix-shutoff");
     mempool.AddTransactionsUpdated(1);
 
     StopHTTPRPC();
     StopREST();
     StopRPC();
     StopHTTPServer();
+    #ifdef ENABLE_WALLET
+        if(!fGhostNode){
+            ShutdownThreadStakeMiner();
+        }
+    #endif
     for (const auto& client : interfaces.chain_clients) {
         client->flush();
     }
@@ -207,7 +363,7 @@ void Shutdown(InitInterfaces& interfaces)
 
     if (fFeeEstimatesInitialized)
     {
-        ::feeEstimator.FlushUnconfirmed();
+        ::feeEstimator.FlushUnconfirmed(::mempool);
         fs::path est_path = GetDataDir() / FEE_ESTIMATES_FILENAME;
         CAutoFile est_fileout(fsbridge::fopen(est_path, "wb"), SER_DISK, CLIENT_VERSION);
         if (!est_fileout.IsNull())
@@ -266,6 +422,7 @@ void Shutdown(InitInterfaces& interfaces)
     GetMainSignals().UnregisterBackgroundSignalScheduler();
     GetMainSignals().UnregisterWithMempoolSignals(mempool);
     globalVerifyHandle.reset();
+    ECC_Stop_Stealth();
     ECC_Stop();
     LogPrintf("%s: done\n", __func__);
 }
@@ -523,10 +680,10 @@ void SetupServerArgs()
 
 std::string LicenseInfo()
 {
-    const std::string URL_SOURCE_CODE = "<https://github.com/bitcoin/bitcoin>";
-    const std::string URL_WEBSITE = "<https://bitcoincore.org>";
+    const std::string URL_SOURCE_CODE = "<https://github.com/nixplatform/nixcore>";
+    const std::string URL_WEBSITE = "<https://nixplatform.io>";
 
-    return CopyrightHolders(strprintf(_("Copyright (C) %i-%i"), 2009, COPYRIGHT_YEAR) + " ") + "\n" +
+    return CopyrightHolders(strprintf(_("Copyright (C) %i-%i"), 2017, COPYRIGHT_YEAR) + " ") + "\n" +
            "\n" +
            strprintf(_("Please contribute if you find %s useful. "
                        "Visit %s for further information about the software."),
@@ -551,8 +708,7 @@ static void BlockNotifyCallback(bool initialSync, const CBlockIndex *pBlockIndex
     std::string strCmd = gArgs.GetArg("-blocknotify", "");
     if (!strCmd.empty()) {
         boost::replace_all(strCmd, "%s", pBlockIndex->GetBlockHash().GetHex());
-        std::thread t(runCommand, strCmd);
-        t.detach(); // thread runs free
+        boost::thread t(runCommand, strCmd); // thread runs free
     }
 }
 
@@ -599,7 +755,7 @@ static void CleanupBlockRevFiles()
     // Remove the rev files immediately and insert the blk file paths into an
     // ordered map keyed by block file index.
     LogPrintf("Removing unusable blk?????.dat and rev?????.dat files for -reindex with -prune\n");
-    fs::path blocksdir = GetBlocksDir();
+    fs::path blocksdir = GetDataDir() / "blocks";
     for (fs::directory_iterator it(blocksdir); it != fs::directory_iterator(); it++) {
         if (fs::is_regular_file(*it) &&
             it->path().filename().string().length() == 12 &&
@@ -629,7 +785,7 @@ static void CleanupBlockRevFiles()
 static void ThreadImport(std::vector<fs::path> vImportFiles)
 {
     const CChainParams& chainparams = Params();
-    RenameThread("bitcoin-loadblk");
+    RenameThread("nix-loadblk");
     ScheduleBatchPriority();
 
     {
@@ -697,6 +853,7 @@ static void ThreadImport(std::vector<fs::path> vImportFiles)
     } // End scope of CImportingNow
     if (gArgs.GetArg("-persistmempool", DEFAULT_PERSIST_MEMPOOL)) {
         LoadMempool();
+        fDumpMempoolLater = !fRequestShutdown;
     }
     g_is_mempool_loaded = !ShutdownRequested();
 }
@@ -1096,7 +1253,7 @@ bool AppInitParameterInteraction()
     if (gArgs.IsArgSet("-dustrelayfee"))
     {
         CAmount n = 0;
-        if (!ParseMoney(gArgs.GetArg("-dustrelayfee", ""), n))
+        if (!ParseMoney(gArgs.GetArg("-dustrelayfee", ""), n) || 0 == n)
             return InitError(AmountErrMsg("dustrelayfee", gArgs.GetArg("-dustrelayfee", "")));
         dustRelayFee = CFeeRate(n);
     }
@@ -1142,9 +1299,6 @@ static bool LockDataDirectory(bool probeOnly)
 {
     // Make sure only a single Bitcoin process is using the data directory.
     fs::path datadir = GetDataDir();
-    if (!DirIsWritable(datadir)) {
-        return InitError(strprintf(_("Cannot write to data directory '%s'; check permissions."), datadir.string()));
-    }
     if (!LockDirectory(datadir, ".lock", probeOnly)) {
         return InitError(strprintf(_("Cannot obtain a lock on data directory %s. %s is probably already running."), datadir.string(), _(PACKAGE_NAME)));
     }
@@ -1160,6 +1314,7 @@ bool AppInitSanityChecks()
     LogPrintf("Using the '%s' SHA256 implementation\n", sha256_algo);
     RandomInit();
     ECC_Start();
+    ECC_Start_Stealth();
     globalVerifyHandle.reset(new ECCVerifyHandle());
 
     // Sanity check
@@ -1227,7 +1382,7 @@ bool AppInitMain(InitInterfaces& interfaces)
         LogPrintf("Warning: relative datadir option '%s' specified, which will be interpreted relative to the " /* Continued */
                   "current working directory '%s'. This is fragile, because if bitcoin is started in the future "
                   "from a different location, it will be unable to locate the current data files. There could "
-                  "also be data loss if bitcoin is started while in a temporary directory.\n",
+                  "also be data loss if NIX is started while in a temporary directory.\n",
             gArgs.GetArg("-datadir", ""), fs::current_path().string());
     }
 
@@ -1328,6 +1483,36 @@ bool AppInitMain(InitInterfaces& interfaces)
     // Check for host lookup allowed before parsing any network related parameters
     fNameLookup = gArgs.GetBoolArg("-dns", DEFAULT_NAME_LOOKUP);
 
+
+    // Enable tor networking
+    boost::filesystem::path pathTorSetting = GetDataDir()/"nixtorsetting.dat";
+    std::pair<bool,std::string> torEnabledArg = ReadBinaryFileTor(pathTorSetting.string().c_str());
+
+    //Enable tor on default
+    if(torEnabledArg.second == ""){
+        LogPrintf("AppInitMain(): Initial startup, Tor networking disabled \n");
+        WriteBinaryFileTor(pathTorSetting.string().c_str(), "disabled");
+    }
+
+    if(torEnabledArg.second == "enabled"){
+        StartTorEnabled(threadGroup, scheduler);
+        SetLimited(NET_TOR);
+        SetLimited(NET_IPV4);
+        SetLimited(NET_IPV6);
+        CService tor_proxy;
+        std::string tor_ip = "127.0.0.1";
+        if (!Lookup(tor_ip.c_str(), tor_proxy, 9050, false)) {
+            return InitError(strprintf(_("Invalid tor address or hostname: '%s'"), tor_ip));
+        }
+        proxyType addrProxy = proxyType(tor_proxy,true);
+        SetProxy(NET_IPV4, addrProxy);
+        SetProxy(NET_IPV6, addrProxy);
+        SetProxy(NET_TOR, addrProxy);
+        SetLimited(NET_IPV4, false);
+        SetLimited(NET_IPV6, false);
+        SetLimited(NET_TOR, false);
+    }
+
     bool proxyRandomize = gArgs.GetBoolArg("-proxyrandomize", DEFAULT_PROXYRANDOMIZE);
     // -proxy sets a proxy for all outgoing network traffic
     // -noproxy (or -proxy=0) as well as the empty string can be used to not set a proxy, this is the default
@@ -1402,6 +1587,19 @@ bool AppInitMain(InitInterfaces& interfaces)
     fReindex = gArgs.GetBoolArg("-reindex", false);
     bool fReindexChainState = gArgs.GetBoolArg("-reindex-chainstate", false);
 
+    //Enable wallet version checking
+    boost::filesystem::path pathVersionSetting = GetDataDir()/"nixversion.dat";
+    std::pair<bool,std::string> versionArg = ReadBinaryFileTor(pathVersionSetting.string().c_str());
+
+    if(versionArg.second == "" || std::stoi(versionArg.second) < CLIENT_VERSION){
+        LogPrintf("AppInitMain(): Initial %s startup, reindexing \n", std::to_string(CLIENT_VERSION));
+        WriteBinaryFileTor(pathVersionSetting.string().c_str(), std::to_string(CLIENT_VERSION));
+        versionArg.second = std::to_string(CLIENT_VERSION);
+        fReindex = true;
+    }
+
+    LogPrintf("AppInitMain(): Wallet version %s logged to nixversion.dat", versionArg.second);
+
     // cache size calculations
     int64_t nTotalCache = (gArgs.GetArg("-dbcache", nDefaultDbCache) << 20);
     nTotalCache = std::max(nTotalCache, nMinDbCache << 20); // total cache cannot be less than nMinDbCache
@@ -1429,7 +1627,7 @@ bool AppInitMain(InitInterfaces& interfaces)
         std::string strLoadError;
 
         uiInterface.InitMessage(_("Loading block index..."));
-
+        nStart = GetTimeMillis();
         LOCK(cs_main);
 
         do {
@@ -1464,9 +1662,8 @@ bool AppInitMain(InitInterfaces& interfaces)
 
                 // If the loaded chain has a wrong genesis, bail out immediately
                 // (we're likely using a testnet datadir, or the other way around).
-                if (!mapBlockIndex.empty() && !LookupBlockIndex(chainparams.GetConsensus().hashGenesisBlock)) {
+                if (!mapBlockIndex.empty() && mapBlockIndex.count(chainparams.GetConsensus().hashGenesisBlock) == 0)
                     return InitError(_("Incorrect or no genesis block found. Wrong datadir for network?"));
-                }
 
                 // Check for changed -prune state.  What we are concerned about is a user who has pruned blocks
                 // in the past, but is now trying to run unpruned.
@@ -1530,17 +1727,20 @@ bool AppInitMain(InitInterfaces& interfaces)
                 if (!is_coinsview_empty) {
                     uiInterface.InitMessage(_("Verifying blocks..."));
                     if (fHavePruned && gArgs.GetArg("-checkblocks", DEFAULT_CHECKBLOCKS) > MIN_BLOCKS_TO_KEEP) {
-                        LogPrintf("Prune: pruned datadir may not have more than %d blocks; only checking available blocks\n",
+                        LogPrintf("Prune: pruned datadir may not have more than %d blocks; only checking available blocks",
                             MIN_BLOCKS_TO_KEEP);
                     }
 
-                    CBlockIndex* tip = chainActive.Tip();
-                    RPCNotifyBlockChange(true, tip);
-                    if (tip && tip->nTime > GetAdjustedTime() + 2 * 60 * 60) {
-                        strLoadError = _("The block database contains a block which appears to be from the future. "
-                                "This may be due to your computer's date and time being set incorrectly. "
-                                "Only rebuild the block database if you are sure that your computer's date and time are correct");
-                        break;
+                    {
+                        LOCK(cs_main);
+                        CBlockIndex* tip = chainActive.Tip();
+                        RPCNotifyBlockChange(true, tip);
+                        if (tip && tip->nTime > GetAdjustedTime() + 2 * 60 * 60) {
+                            strLoadError = _("The block database contains a block which appears to be from the future. "
+                                    "This may be due to your computer's date and time being set incorrectly. "
+                                    "Only rebuild the block database if you are sure that your computer's date and time are correct");
+                            break;
+                        }
                     }
 
                     if (!CVerifyDB().VerifyDB(chainparams, pcoinsdbview.get(), gArgs.GetArg("-checklevel", DEFAULT_CHECKLEVEL),
@@ -1687,14 +1887,12 @@ bool AppInitMain(InitInterfaces& interfaces)
     LogPrintf("nBestHeight = %d\n", chain_active_height);
 
     if (gArgs.GetBoolArg("-listenonion", DEFAULT_LISTEN_ONION))
-        StartTorControl();
+        StartTorControl(threadGroup, scheduler);
 
-    Discover();
+    Discover(threadGroup);
 
     // Map ports with UPnP
-    if (gArgs.GetBoolArg("-upnp", DEFAULT_UPNP)) {
-        StartMapPort();
-    }
+    MapPort(gArgs.GetBoolArg("-upnp", DEFAULT_UPNP));
 
     CConnman::Options connOptions;
     connOptions.nLocalServices = nLocalServices;
@@ -1753,7 +1951,128 @@ bool AppInitMain(InitInterfaces& interfaces)
         return false;
     }
 
-    // ********************************************************* Step 13: finished
+    // ********************************************************* Step 11a: setup PrivateSend
+    fGhostNode = gArgs.GetBoolArg("-ghostnode", false);
+
+    LogPrintf("fGhostNode = %s\n", fGhostNode);
+    LogPrintf("ghostnodeConfig.getCount(): %s\n", ghostnodeConfig.getCount());
+
+    if ((fGhostNode || ghostnodeConfig.getCount() > 0) && !fTxIndex) {
+        return InitError("Enabling Ghostnode support requires turning on transaction indexing."
+                         "Please add txindex=1 to your configuration and start with -reindex");
+    }
+
+    if (fGhostNode) {
+        LogPrintf("ghostnode:\n");
+
+        if (!gArgs.GetArg("-ghostnodeaddr", "").empty()) {
+            // Hot Ghostnode (either local or remote) should get its address in
+            // CActiveGhostnode::ManageState() automatically and no longer relies on Ghostnodeaddr.
+            return InitError(_("ghostnodeaddr option is deprecated. Please use ghostnode.conf to manage your remote ghostnodes."));
+        }
+
+        std::string strGhostnodePrivKey = gArgs.GetArg("-ghostnodeprivkey", "");
+        if (!strGhostnodePrivKey.empty()) {
+            if (!darkSendSigner.GetKeysFromSecret(strGhostnodePrivKey, activeGhostnode.keyGhostnode,
+                                                  activeGhostnode.pubKeyGhostnode))
+                return InitError(_("Invalid ghostnode privkey. Please see documenation."));
+
+            LogPrintf("pubKeyGhostnode: %s\n", CBitcoinAddress(activeGhostnode.pubKeyGhostnode.GetID()).ToString());
+        } else {
+            return InitError(
+                        _("You must specify a ghostnode privkey in the configuration. Please see documentation for help."));
+        }
+    }
+
+    LogPrintf("Using Ghostnode config file %s\n", GetGhostnodeConfigFile().string());
+
+    if (gArgs.GetBoolArg("-ghostnodeconflock", true) && vpwallets.front() && (ghostnodeConfig.getCount() > 0)) {
+        LOCK(vpwallets.front()->cs_wallet);
+        LogPrintf("Locking Ghostnodes:\n");
+        uint256 mnTxHash;
+        int outputIndex;
+        BOOST_FOREACH(CGhostnodeConfig::CGhostnodeEntry
+                      mne, ghostnodeConfig.getEntries()) {
+            mnTxHash.SetHex(mne.getTxHash());
+            outputIndex = boost::lexical_cast<unsigned int>(mne.getOutputIndex());
+            COutPoint outpoint = COutPoint(mnTxHash, outputIndex);
+            // don't lock non-spendable outpoint (i.e. it's already spent or it's not from this wallet at all)
+            if (vpwallets.front()->IsMine(CTxIn(outpoint)) != ISMINE_SPENDABLE) {
+                LogPrintf("  %s %s - IS NOT SPENDABLE, was not locked\n", mne.getTxHash(), mne.getOutputIndex());
+                continue;
+            }
+            vpwallets.front()->LockCoin(outpoint);
+            LogPrintf("  %s %s - locked successfully\n", mne.getTxHash(), mne.getOutputIndex());
+        }
+    }
+
+
+    nLiquidityProvider = gArgs.GetArg("-liquidityprovider", nLiquidityProvider);
+    nLiquidityProvider = std::min(std::max(nLiquidityProvider, 0), 100);
+    darkSendPool.SetMinBlockSpacing(nLiquidityProvider * 15);
+
+    fEnablePrivateSend = false;
+
+    //lite mode disables all Ghostnode and Darksend related functionality
+    fLiteMode = gArgs.GetBoolArg("-litemode", false);
+    if (fGhostNode && fLiteMode) {
+        return InitError("You can not start a ghostnode in litemode");
+    }
+
+    LogPrintf("fLiteMode %d\n", fLiteMode);
+
+    darkSendPool.InitDenominations();
+
+    // ********************************************************* Step 11b: Load cache data
+
+
+    CFlatDB<CNetFulfilledRequestManager> flatdb4("netfulfilled.dat", "magicFulfilledCache");
+    flatdb4.Load(netfulfilledman);
+
+
+    // ********************************************************* Step 11c: update block tip in nix modules
+
+
+    mnodeman.UpdatedBlockTip(chainActive.Tip());
+    darkSendPool.UpdatedBlockTip(chainActive.Tip());
+    mnpayments.UpdatedBlockTip(chainActive.Tip());
+    ghostnodeSync.UpdatedBlockTip(chainActive.Tip());
+
+    // ********************************************************* Step 11d: start ghostnode thread
+
+    threadGroup.create_thread(boost::bind(&ThreadCheckDarkSendPool));
+
+
+    // ********************************************************* Step 11e: start staking
+
+    //do not allow ghostnodes to run staking threads to avoid bandwidth issues
+    if(!fGhostNode){
+        #ifdef ENABLE_WALLET
+        nMinStakeInterval = gArgs.GetArg("-minstakeinterval", 0);
+        nMinerSleep = gArgs.GetArg("-minersleep", 500);
+        if (!gArgs.GetBoolArg("-staking", true))
+            LogPrintf("NIX Staking disabled\n");
+        else
+        {
+            size_t nWallets = vpwallets.size();
+            assert(nWallets > 0);
+            size_t nThreads = std::min(nWallets, (size_t)gArgs.GetArg("-stakingthreads", 1));
+
+            size_t nPerThread = nWallets / nThreads;
+            for (size_t i = 0; i < nThreads; ++i)
+            {
+                size_t nStart = nPerThread * i;
+                size_t nEnd = (i == nThreads-1) ? nWallets : nPerThread * (i+1);
+                StakeThread *t = new StakeThread();
+                vStakeThreads.push_back(t);
+                vpwallets[i]->nStakeThread = i;
+                t->sName = strprintf("miner%d", i);
+                t->thread = std::thread(&TraceThread<std::function<void()> >, t->sName.c_str(), std::function<void()>(std::bind(&ThreadStakeMiner, i, vpwallets, nStart, nEnd)));
+            };
+        }
+        #endif
+    }
+    // ********************************************************* Step 12: finished
 
     SetRPCWarmupFinished();
     uiInterface.InitMessage(_("Done loading"));

@@ -6,7 +6,7 @@
 #define BITCOIN_NETADDRESS_H
 
 #if defined(HAVE_CONFIG_H)
-#include <config/bitcoin-config.h>
+#include <config/nix-config.h>
 #endif
 
 #include <compat.h>
@@ -16,7 +16,6 @@
 #include <stdint.h>
 #include <string>
 #include <vector>
-
 enum Network
 {
     NET_UNROUTABLE = 0,
@@ -96,7 +95,7 @@ class CNetAddr
 
         template <typename Stream, typename Operation>
         inline void SerializationOp(Stream& s, Operation ser_action) {
-            READWRITE(ip);
+            READWRITE(FLATDATA(ip));
         }
 
         friend class CSubNet;
@@ -134,8 +133,8 @@ class CSubNet
         template <typename Stream, typename Operation>
         inline void SerializationOp(Stream& s, Operation ser_action) {
             READWRITE(network);
-            READWRITE(netmask);
-            READWRITE(valid);
+            READWRITE(FLATDATA(netmask));
+            READWRITE(FLATDATA(valid));
         }
 };
 

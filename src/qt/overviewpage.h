@@ -8,6 +8,7 @@
 #include <interfaces/wallet.h>
 
 #include <QWidget>
+#include <QLabel>
 #include <memory>
 
 class ClientModel;
@@ -15,6 +16,7 @@ class TransactionFilterProxy;
 class TxViewDelegate;
 class PlatformStyle;
 class WalletModel;
+class GhostVault;
 
 namespace Ui {
     class OverviewPage;
@@ -36,6 +38,9 @@ public:
     void setClientModel(ClientModel *clientModel);
     void setWalletModel(WalletModel *walletModel);
     void showOutOfSyncWarning(bool fShow);
+    QLabel *isStaking;
+
+    GhostVault *ghostVaultPage;
 
 public Q_SLOTS:
     void setBalance(const interfaces::WalletBalances& balances);
@@ -43,6 +48,7 @@ public Q_SLOTS:
 Q_SIGNALS:
     void transactionClicked(const QModelIndex &index);
     void outOfSyncWarningClicked();
+    void enabledTorChanged();
 
 private:
     Ui::OverviewPage *ui;
@@ -59,6 +65,7 @@ private Q_SLOTS:
     void updateAlerts(const QString &warnings);
     void updateWatchOnlyLabels(bool showWatchOnly);
     void handleOutOfSyncWarningClicks();
+    void handleEnabledTorChanged();
 };
 
 #endif // BITCOIN_QT_OVERVIEWPAGE_H

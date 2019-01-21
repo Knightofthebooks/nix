@@ -28,9 +28,7 @@ def b58encode(v):
     """
     long_value = 0
     for (i, c) in enumerate(v[::-1]):
-        if isinstance(c, str):
-            c = ord(c)
-        long_value += (256**i) * c
+        long_value += (256**i) * ord(c)
 
     result = ''
     while long_value >= __b58base:
@@ -54,10 +52,8 @@ def b58decode(v, length = None):
     """ decode v into a string of len bytes
     """
     long_value = 0
-    for i, c in enumerate(v[::-1]):
-        pos = __b58chars.find(c)
-        assert pos != -1
-        long_value += pos * (__b58base**i)
+    for (i, c) in enumerate(v[::-1]):
+        long_value += __b58chars.find(c) * (__b58base**i)
 
     result = bytes()
     while long_value >= 256:
@@ -68,12 +64,10 @@ def b58decode(v, length = None):
 
     nPad = 0
     for c in v:
-        if c == __b58chars[0]:
-            nPad += 1
-            continue
-        break
+        if c == __b58chars[0]: nPad += 1
+        else: break
 
-    result = bytes(nPad) + result
+    result = chr(0)*nPad + result
     if length is not None and len(result) != length:
         return None
 

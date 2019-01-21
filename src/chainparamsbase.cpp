@@ -23,10 +23,50 @@ void SetupChainParamsBaseOptions()
     gArgs.AddArg("-vbparams=deployment:start:end", "Use given start/end times for specified version bits deployment (regtest-only)", true, OptionsCategory::CHAINPARAMS);
 }
 
+/**
+ * Main network
+ */
+class CBaseMainParams : public CBaseChainParams
+{
+public:
+    CBaseMainParams()
+    {
+        nRPCPort = 6215;
+    }
+};
+
+/**
+ * Testnet (v3)
+ */
+class CBaseTestNetParams : public CBaseChainParams
+{
+public:
+    CBaseTestNetParams()
+    {
+        nRPCPort = 16215;
+        strDataDir = "testnet3";
+    }
+};
+
+/*
+ * Regression test
+ */
+class CBaseRegTestParams : public CBaseChainParams
+{
+public:
+    CBaseRegTestParams()
+    {
+        nRPCPort = 16216;
+        strDataDir = "regtest";
+    }
+};
+
 static std::unique_ptr<CBaseChainParams> globalChainBaseParams;
 
 const CBaseChainParams& BaseParams()
 {
+    if(!globalChainBaseParams)
+        SelectBaseParams(ChainNameFromCommandLine());
     assert(globalChainBaseParams);
     return *globalChainBaseParams;
 }
@@ -34,11 +74,11 @@ const CBaseChainParams& BaseParams()
 std::unique_ptr<CBaseChainParams> CreateBaseChainParams(const std::string& chain)
 {
     if (chain == CBaseChainParams::MAIN)
-        return MakeUnique<CBaseChainParams>("", 8332);
+        return std::unique_ptr<CBaseChainParams>(new CBaseMainParams());
     else if (chain == CBaseChainParams::TESTNET)
-        return MakeUnique<CBaseChainParams>("testnet3", 18332);
+        return std::unique_ptr<CBaseChainParams>(new CBaseTestNetParams());
     else if (chain == CBaseChainParams::REGTEST)
-        return MakeUnique<CBaseChainParams>("regtest", 18443);
+        return std::unique_ptr<CBaseChainParams>(new CBaseRegTestParams());
     else
         throw std::runtime_error(strprintf("%s: Unknown chain %s.", __func__, chain));
 }

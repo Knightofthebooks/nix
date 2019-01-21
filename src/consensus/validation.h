@@ -22,6 +22,14 @@ static const unsigned char REJECT_NONSTANDARD = 0x40;
 static const unsigned char REJECT_INSUFFICIENTFEE = 0x42;
 static const unsigned char REJECT_CHECKPOINT = 0x43;
 
+static const unsigned char REJECT_TRANSACTION_TOO_EARLY = 0x44;
+static const unsigned char REJECT_FOUNDER_REWARD_MISSING = 0x45;
+static const unsigned char PUBCOIN_NOT_VALIDATE = 0x46;
+static const unsigned char NSEQUENCE_INCORRECT = 0x47;
+static const unsigned char PUBLIC_COIN_FOR_ACCUMULATOR_INVALID = 0x48;
+static const unsigned char NO_MINT_ZEROCOIN = 0x49;
+static const unsigned char REJECT_INVALID_GHOSTNODE_PAYMENT = 0x50;
+
 /** Capture information about block/transaction validation */
 class CValidationState {
 private:
@@ -36,7 +44,9 @@ private:
     bool corruptionPossible;
     std::string strDebugMessage;
 public:
-    CValidationState() : mode(MODE_VALID), nDoS(0), chRejectCode(0), corruptionPossible(false) {}
+    int nFlags;
+    int nodeId;
+    CValidationState() : mode(MODE_VALID), nDoS(0), chRejectCode(0), corruptionPossible(false) {nodeId = -1; nFlags = 0;}
     bool DoS(int level, bool ret = false,
              unsigned int chRejectCodeIn=0, const std::string &strRejectReasonIn="",
              bool corruptionIn=false,

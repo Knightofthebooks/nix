@@ -104,18 +104,17 @@ static leveldb::Options GetOptions(size_t nCacheSize)
     options.write_buffer_size = nCacheSize / 4; // up to two write buffers may be held in memory simultaneously
     options.filter_policy = leveldb::NewBloomFilterPolicy(10);
     options.compression = leveldb::kNoCompression;
+    options.max_open_files = 64;
     options.info_log = new CBitcoinLevelDBLogger();
     if (leveldb::kMajorVersion > 1 || (leveldb::kMajorVersion == 1 && leveldb::kMinorVersion >= 16)) {
         // LevelDB versions before 1.16 consider short writes to be corruption. Only trigger error
         // on corruption in later versions.
         options.paranoid_checks = true;
     }
-    SetMaxOpenFiles(&options);
     return options;
 }
 
 CDBWrapper::CDBWrapper(const fs::path& path, size_t nCacheSize, bool fMemory, bool fWipe, bool obfuscate)
-    : m_name(fs::basename(path))
 {
     penv = nullptr;
     readoptions.verify_checksums = true;
@@ -182,28 +181,9 @@ CDBWrapper::~CDBWrapper()
 
 bool CDBWrapper::WriteBatch(CDBBatch& batch, bool fSync)
 {
-    const bool log_memory = LogAcceptCategory(BCLog::LEVELDB);
-    double mem_before = 0;
-    if (log_memory) {
-        mem_before = DynamicMemoryUsage() / 1024.0 / 1024;
-    }
     leveldb::Status status = pdb->Write(fSync ? syncoptions : writeoptions, &batch.batch);
     dbwrapper_private::HandleError(status);
-    if (log_memory) {
-        double mem_after = DynamicMemoryUsage() / 1024.0 / 1024;
-        LogPrint(BCLog::LEVELDB, "WriteBatch memory usage: db=%s, before=%.1fMiB, after=%.1fMiB\n",
-                 m_name, mem_before, mem_after);
-    }
     return true;
-}
-
-size_t CDBWrapper::DynamicMemoryUsage() const {
-    std::string memory;
-    if (!pdb->GetProperty("leveldb.approximate-memory-usage", &memory)) {
-        LogPrint(BCLog::LEVELDB, "Failed to get approximate-memory-usage property\n");
-        return 0;
-    }
-    return stoul(memory);
 }
 
 // Prefixed with null character to avoid collisions with other keys
@@ -244,10 +224,14 @@ void HandleError(const leveldb::Status& status)
 {
     if (status.ok())
         return;
-    const std::string errmsg = "Fatal LevelDB error: " + status.ToString();
-    LogPrintf("%s\n", errmsg);
-    LogPrintf("You can use -debug=leveldb to get more complete diagnostic messages\n");
-    throw dbwrapper_error(errmsg);
+    LogPrintf("%s\n", status.ToString());
+    if (status.IsCorruption())
+        throw dbwrapper_error("Database corrupted");
+    if (status.IsIOError())
+        throw dbwrapper_error("Database I/O error");
+    if (status.IsNotFound())
+        throw dbwrapper_error("Database entry missing");
+    throw dbwrapper_error("Unknown database error");
 }
 
 const std::vector<unsigned char>& GetObfuscateKey(const CDBWrapper &w)

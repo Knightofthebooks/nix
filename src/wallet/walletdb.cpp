@@ -5,10 +5,10 @@
 
 #include <wallet/walletdb.h>
 
+#include <base58.h>
 #include <consensus/tx_verify.h>
 #include <consensus/validation.h>
 #include <fs.h>
-#include <key_io.h>
 #include <protocol.h>
 #include <serialize.h>
 #include <sync.h>
@@ -20,6 +20,7 @@
 #include <string>
 
 #include <boost/thread.hpp>
+#include <boost/foreach.hpp>
 
 //
 // WalletBatch
@@ -192,11 +193,26 @@ ReadKeyValue(CWallet* pwallet, CDataStream& ssKey, CDataStream& ssValue,
         {
             uint256 hash;
             ssKey >> hash;
-            CWalletTx wtx(nullptr /* pwallet */, MakeTransactionRef());
+            CWalletTx wtx;
             ssValue >> wtx;
             CValidationState state;
-            if (!(CheckTransaction(*wtx.tx, state) && (wtx.GetHash() == hash) && state.IsValid()))
+            int nHeight = INT_MAX;
+            if(!wtx.tx->vin.empty()){
+                const uint256& prevHash = wtx.tx->GetHash();
+                CTransactionRef tx;
+                uint256 hashBlock;
+                bool fFound = GetTransaction(prevHash, tx, Params().GetConsensus(), hashBlock);
+                if(fFound)
+                {
+                    if(mapBlockIndex.find(hashBlock) != mapBlockIndex.end())
+                    {
+                        nHeight = mapBlockIndex[hashBlock]->nHeight;
+                    }
+                }
+            }
+            if (!(CheckTransaction(*wtx.tx, state, wtx.GetHash(), true, true, nHeight) && (wtx.GetHash() == hash) && state.IsValid())){
                 return false;
+            }
 
             // Undo serialize changes in 31600
             if (31404 <= wtx.fTimeReceivedIsTxTime && wtx.fTimeReceivedIsTxTime <= 31703)
@@ -434,7 +450,7 @@ DBErrors WalletBatch::LoadWallet(CWallet* pwallet)
 {
     CWalletScanState wss;
     bool fNoncriticalErrors = false;
-    DBErrors result = DBErrors::LOAD_OK;
+    DBErrors result = DB_LOAD_OK;
 
     LOCK(pwallet->cs_wallet);
     try {
@@ -496,15 +512,17 @@ DBErrors WalletBatch::LoadWallet(CWallet* pwallet)
         throw;
     }
     catch (...) {
-        result = DBErrors::CORRUPT;
+        result = DB_CORRUPT;
     }
 
-    if (fNoncriticalErrors && result == DBErrors::LOAD_OK)
-        result = DBErrors::NONCRITICAL_ERROR;
+    if (fNoncriticalErrors && result == DB_LOAD_OK)
+        result = DB_NONCRITICAL_ERROR;
+
+    pwallet->walletVersion = wss.nFileVersion;
 
     // Any wallet corruption at all: skip any rewriting or
     // upgrading, we don't want to make it worse.
-    if (result != DBErrors::LOAD_OK)
+    if (result != DB_LOAD_OK)
         return result;
 
     pwallet->WalletLogPrintf("nFileVersion = %d\n", wss.nFileVersion);
@@ -521,7 +539,7 @@ DBErrors WalletBatch::LoadWallet(CWallet* pwallet)
 
     // Rewrite encrypted wallets of versions 0.4.0 and 0.5.0rc:
     if (wss.fIsEncrypted && (wss.nFileVersion == 40000 || wss.nFileVersion == 50000))
-        return DBErrors::NEED_REWRITE;
+        return DB_NEED_REWRITE;
 
     if (wss.nFileVersion < CLIENT_VERSION) // Update
         WriteVersion(CLIENT_VERSION);
@@ -534,7 +552,7 @@ DBErrors WalletBatch::LoadWallet(CWallet* pwallet)
 
 DBErrors WalletBatch::FindWalletTx(std::vector<uint256>& vTxHash, std::vector<CWalletTx>& vWtx)
 {
-    DBErrors result = DBErrors::LOAD_OK;
+    DBErrors result = DB_LOAD_OK;
 
     try {
         int nMinVersion = 0;
@@ -549,7 +567,7 @@ DBErrors WalletBatch::FindWalletTx(std::vector<uint256>& vTxHash, std::vector<CW
         if (!pcursor)
         {
             LogPrintf("Error getting wallet database cursor\n");
-            return DBErrors::CORRUPT;
+            return DB_CORRUPT;
         }
 
         while (true)
@@ -563,7 +581,7 @@ DBErrors WalletBatch::FindWalletTx(std::vector<uint256>& vTxHash, std::vector<CW
             else if (ret != 0)
             {
                 LogPrintf("Error reading next record from wallet database\n");
-                return DBErrors::CORRUPT;
+                return DB_CORRUPT;
             }
 
             std::string strType;
@@ -572,7 +590,7 @@ DBErrors WalletBatch::FindWalletTx(std::vector<uint256>& vTxHash, std::vector<CW
                 uint256 hash;
                 ssKey >> hash;
 
-                CWalletTx wtx(nullptr /* pwallet */, MakeTransactionRef());
+                CWalletTx wtx;
                 ssValue >> wtx;
 
                 vTxHash.push_back(hash);
@@ -585,7 +603,7 @@ DBErrors WalletBatch::FindWalletTx(std::vector<uint256>& vTxHash, std::vector<CW
         throw;
     }
     catch (...) {
-        result = DBErrors::CORRUPT;
+        result = DB_CORRUPT;
     }
 
     return result;
@@ -597,7 +615,7 @@ DBErrors WalletBatch::ZapSelectTx(std::vector<uint256>& vTxHashIn, std::vector<u
     std::vector<uint256> vTxHash;
     std::vector<CWalletTx> vWtx;
     DBErrors err = FindWalletTx(vTxHash, vWtx);
-    if (err != DBErrors::LOAD_OK) {
+    if (err != DB_LOAD_OK) {
         return err;
     }
 
@@ -624,9 +642,9 @@ DBErrors WalletBatch::ZapSelectTx(std::vector<uint256>& vTxHashIn, std::vector<u
     }
 
     if (delerror) {
-        return DBErrors::CORRUPT;
+        return DB_CORRUPT;
     }
-    return DBErrors::LOAD_OK;
+    return DB_LOAD_OK;
 }
 
 DBErrors WalletBatch::ZapWalletTx(std::vector<CWalletTx>& vWtx)
@@ -634,16 +652,16 @@ DBErrors WalletBatch::ZapWalletTx(std::vector<CWalletTx>& vWtx)
     // build list of wallet TXs
     std::vector<uint256> vTxHash;
     DBErrors err = FindWalletTx(vTxHash, vWtx);
-    if (err != DBErrors::LOAD_OK)
+    if (err != DB_LOAD_OK)
         return err;
 
     // erase each wallet TX
     for (const uint256& hash : vTxHash) {
         if (!EraseTx(hash))
-            return DBErrors::CORRUPT;
+            return DB_CORRUPT;
     }
 
-    return DBErrors::LOAD_OK;
+    return DB_LOAD_OK;
 }
 
 void MaybeCompactWalletDB()
@@ -768,4 +786,266 @@ bool WalletBatch::ReadVersion(int& nVersion)
 bool WalletBatch::WriteVersion(int nVersion)
 {
     return m_batch.WriteVersion(nVersion);
+}
+
+bool CWalletDB::WriteCoinSpendSerialEntry(const CZerocoinSpendEntry &zerocoinSpend) {
+    return WriteIC(make_pair(string("zcserial"), zerocoinSpend.coinSerial), zerocoinSpend);
+}
+
+bool CWalletDB::EraseCoinSpendSerialEntry(const CZerocoinSpendEntry &zerocoinSpend) {
+    return EraseIC(make_pair(string("zcserial"), zerocoinSpend.coinSerial));
+}
+
+bool
+CWalletDB::WriteZerocoinAccumulator(libzerocoin::Accumulator accumulator, libzerocoin::CoinDenomination denomination,
+                                    int pubcoinid) {
+    return WriteIC(std::make_tuple(string("zcaccumulator"), (unsigned int) denomination, pubcoinid), accumulator);
+}
+
+bool
+CWalletDB::ReadZerocoinAccumulator(libzerocoin::Accumulator &accumulator, libzerocoin::CoinDenomination denomination,
+                                   int pubcoinid) {
+    return batch.Read(std::make_tuple(string("zcaccumulator"), (unsigned int) denomination, pubcoinid), accumulator);
+}
+
+bool CWalletDB::WriteZerocoinEntry(const CZerocoinEntry &zerocoin) {
+    return WriteIC(make_pair(string("zerocoin"), zerocoin.value), zerocoin);
+}
+
+bool CWalletDB::EraseZerocoinEntry(const CZerocoinEntry &zerocoin) {
+    return EraseIC(make_pair(string("zerocoin"), zerocoin.value));
+}
+
+bool CWalletDB::WriteUnloadedZCEntry(const CZerocoinEntry &zerocoin) {
+    return WriteIC(make_pair(string("unloadedzerocoin"), zerocoin.value), zerocoin);
+}
+
+bool CWalletDB::EraseUnloadedZCEntry(const CZerocoinEntry &zerocoin) {
+    return EraseIC(make_pair(string("unloadedzerocoin"), zerocoin.value));
+}
+
+// Check Calculated Blocked for Zerocoin
+bool CWalletDB::ReadCalculatedZCBlock(int &height) {
+    height = 0;
+    return batch.Read(std::string("calculatedzcblock"), height);
+}
+
+bool CWalletDB::WriteCalculatedZCBlock(int height) {
+    return WriteIC(std::string("calculatedzcblock"), height);
+}
+
+void CWalletDB::ListPubCoin(std::list <CZerocoinEntry> &listPubCoin) {
+    Dbc *pcursor = batch.GetCursor();
+    if (!pcursor)
+        throw runtime_error("CWalletDB::ListPubCoin() : cannot create DB cursor");
+    unsigned int fFlags = DB_SET_RANGE;
+    while (true) {
+        // Read next record
+        CDataStream ssKey(SER_DISK, CLIENT_VERSION);
+        if (fFlags == DB_SET_RANGE)
+            ssKey << make_pair(string("zerocoin"), CBigNum(0));
+        CDataStream ssValue(SER_DISK, CLIENT_VERSION);
+        int ret = batch.ReadAtCursor(pcursor, ssKey, ssValue, fFlags);
+        fFlags = DB_NEXT;
+        if (ret == DB_NOTFOUND)
+            break;
+        else if (ret != 0) {
+            pcursor->close();
+            throw runtime_error("CWalletDB::ListPubCoin() : error scanning DB");
+        }
+        // Unserialize
+        string strType;
+        ssKey >> strType;
+        if (strType != "zerocoin")
+            break;
+        CBigNum value;
+        ssKey >> value;
+        CZerocoinEntry zerocoinItem;
+        ssValue >> zerocoinItem;
+        listPubCoin.push_back(zerocoinItem);
+    }
+    pcursor->close();
+}
+
+void CWalletDB::ListUnloadedPubCoin(std::list <CZerocoinEntry> &listUnloadedPubCoin) {
+    Dbc *pcursor = batch.GetCursor();
+    if (!pcursor)
+        throw runtime_error("CWalletDB::ListUnloadedPubCoin() : cannot create DB cursor");
+    unsigned int fFlags = DB_SET_RANGE;
+    while (true) {
+        // Read next record
+        CDataStream ssKey(SER_DISK, CLIENT_VERSION);
+        if (fFlags == DB_SET_RANGE)
+            ssKey << make_pair(string("unloadedzerocoin"), CBigNum(0));
+        CDataStream ssValue(SER_DISK, CLIENT_VERSION);
+        int ret = batch.ReadAtCursor(pcursor, ssKey, ssValue, fFlags);
+        fFlags = DB_NEXT;
+        if (ret == DB_NOTFOUND)
+            break;
+        else if (ret != 0) {
+            pcursor->close();
+            throw runtime_error("CWalletDB::ListPubCoin() : error scanning DB");
+        }
+        // Unserialize
+        string strType;
+        ssKey >> strType;
+        if (strType != "unloadedzerocoin")
+            break;
+        CBigNum value;
+        ssKey >> value;
+        CZerocoinEntry zerocoinItem;
+        ssValue >> zerocoinItem;
+        listUnloadedPubCoin.push_back(zerocoinItem);
+    }
+    pcursor->close();
+}
+
+void CWalletDB::ListCoinSpendSerial(std::list <CZerocoinSpendEntry> &listCoinSpendSerial) {
+    Dbc *pcursor = batch.GetCursor();
+    if (!pcursor)
+        throw runtime_error("CWalletDB::ListCoinSpendSerial() : cannot create DB cursor");
+    unsigned int fFlags = DB_SET_RANGE;
+    while (true) {
+        // Read next record
+        CDataStream ssKey(SER_DISK, CLIENT_VERSION);
+        if (fFlags == DB_SET_RANGE)
+            ssKey << make_pair(string("zcserial"), CBigNum(0));
+        CDataStream ssValue(SER_DISK, CLIENT_VERSION);
+        int ret = batch.ReadAtCursor(pcursor, ssKey, ssValue, fFlags);
+        fFlags = DB_NEXT;
+        if (ret == DB_NOTFOUND)
+            break;
+        else if (ret != 0) {
+            pcursor->close();
+            throw runtime_error("CWalletDB::ListCoinSpendSerial() : error scanning DB");
+        }
+
+        // Unserialize
+        string strType;
+        ssKey >> strType;
+        if (strType != "zcserial")
+            break;
+        CBigNum value;
+        ssKey >> value;
+        CZerocoinSpendEntry zerocoinSpendItem;
+        ssValue >> zerocoinSpendItem;
+        listCoinSpendSerial.push_back(zerocoinSpendItem);
+    }
+
+    pcursor->close();
+}
+
+// This should be called carefully:
+// either supply "wallet" (if already loaded) or "strWalletFile" (if wallet wasn't loaded yet)
+bool AutoBackupWallet (CWallet* wallet, std::string strWalletFile, std::string& strBackupWarning, std::string& strBackupError)
+{
+    namespace fs = boost::filesystem;
+
+    strBackupWarning = strBackupError = "";
+
+    if(nWalletBackups > 0)
+    {
+        fs::path backupsDir = GetBackupsDir();
+
+        if (!fs::exists(backupsDir))
+        {
+            // Always create backup folder to not confuse the operating system's file browser
+            LogPrintf("Creating backup folder %s\n", backupsDir.string());
+            if(!fs::create_directories(backupsDir)) {
+                // smth is wrong, we shouldn't continue until it's resolved
+                strBackupError = strprintf(_("Wasn't able to create wallet backup folder %s!"), backupsDir.string());
+                LogPrintf("%s\n", strBackupError);
+                nWalletBackups = -1;
+                return false;
+            }
+        }
+
+        // Create backup of the ...
+        std::string dateTimeStr = DateTimeStrFormat(".%Y-%m-%d-%H-%M", GetTime());
+        if (wallet)
+        {
+            // ... opened wallet
+            LOCK2(cs_main, wallet->cs_wallet);
+            //TODO: create a walletbackup
+            //strWalletFile = wallet->strWalletFile;
+            fs::path backupFile = backupsDir / (strWalletFile + dateTimeStr);
+
+            // Update nKeysLeftSinceAutoBackup using current pool size
+            wallet->nKeysLeftSinceAutoBackup = wallet->GetKeyPoolSize();
+            LogPrintf("nKeysLeftSinceAutoBackup: %d\n", wallet->nKeysLeftSinceAutoBackup);
+            if(wallet->IsLocked(true)) {
+                strBackupWarning = _("Wallet is locked, can't replenish keypool! Automatic backups and mixing are disabled, please unlock your wallet to replenish keypool.");
+                LogPrintf("%s\n", strBackupWarning);
+                nWalletBackups = -2;
+                return false;
+            }
+        } else {
+            // ... strWalletFile file
+            fs::path sourceFile = GetDataDir() / strWalletFile;
+            fs::path backupFile = backupsDir / (strWalletFile + dateTimeStr);
+            sourceFile.make_preferred();
+            backupFile.make_preferred();
+            if (fs::exists(backupFile))
+            {
+                strBackupWarning = _("Failed to create backup, file already exists! This could happen if you restarted wallet in less than 60 seconds. You can continue if you are ok with this.");
+                LogPrintf("%s\n", strBackupWarning);
+                return false;
+            }
+            if(fs::exists(sourceFile)) {
+                try {
+                    fs::copy_file(sourceFile, backupFile);
+                    LogPrintf("Creating backup of %s -> %s\n", sourceFile.string(), backupFile.string());
+                } catch(fs::filesystem_error &error) {
+                    strBackupWarning = strprintf(_("Failed to create backup, error: %s"), error.what());
+                    LogPrintf("%s\n", strBackupWarning);
+                    nWalletBackups = -1;
+                    return false;
+                }
+            }
+        }
+
+        // Keep only the last 10 backups, including the new one of course
+        typedef std::multimap<std::time_t, fs::path> folder_set_t;
+        folder_set_t folder_set;
+        fs::directory_iterator end_iter;
+        backupsDir.make_preferred();
+        // Build map of backup files for current(!) wallet sorted by last write time
+        fs::path currentFile;
+        for (fs::directory_iterator dir_iter(backupsDir); dir_iter != end_iter; ++dir_iter)
+        {
+            // Only check regular files
+            if ( fs::is_regular_file(dir_iter->status()))
+            {
+                currentFile = dir_iter->path().filename();
+                // Only add the backups for the current wallet, e.g. wallet.dat.*
+                if(dir_iter->path().stem().string() == strWalletFile)
+                {
+                    folder_set.insert(folder_set_t::value_type(fs::last_write_time(dir_iter->path()), *dir_iter));
+                }
+            }
+        }
+
+        // Loop backward through backup files and keep the N newest ones (1 <= N <= 10)
+        int counter = 0;
+        BOOST_REVERSE_FOREACH(PAIRTYPE(const std::time_t, fs::path) file, folder_set)
+        {
+            counter++;
+            if (counter > nWalletBackups)
+            {
+                // More than nWalletBackups backups: delete oldest one(s)
+                try {
+                    fs::remove(file.second);
+                    LogPrintf("Old backup deleted: %s\n", file.second);
+                } catch(fs::filesystem_error &error) {
+                    strBackupWarning = strprintf(_("Failed to delete backup, error: %s"), error.what());
+                    LogPrintf("%s\n", strBackupWarning);
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    LogPrintf("Automatic wallet backups are disabled!\n");
+    return false;
 }

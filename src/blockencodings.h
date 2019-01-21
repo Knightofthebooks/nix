@@ -90,11 +90,11 @@ public:
             while (txn.size() < txn_size) {
                 txn.resize(std::min((uint64_t)(1000 + txn.size()), txn_size));
                 for (; i < txn.size(); i++)
-                    READWRITE(TransactionCompressor(txn[i]));
+                    READWRITE(REF(TransactionCompressor(txn[i])));
             }
         } else {
             for (size_t i = 0; i < txn.size(); i++)
-                READWRITE(TransactionCompressor(txn[i]));
+                READWRITE(REF(TransactionCompressor(txn[i])));
         }
     }
 };
@@ -115,7 +115,7 @@ struct PrefilledTransaction {
         if (idx > std::numeric_limits<uint16_t>::max())
             throw std::ios_base::failure("index overflowed 16-bits");
         index = idx;
-        READWRITE(TransactionCompressor(tx));
+        READWRITE(REF(TransactionCompressor(tx)));
     }
 };
 
@@ -144,6 +144,7 @@ protected:
 
 public:
     CBlockHeader header;
+    std::vector<uint8_t> vchBlockSig;
 
     // Dummy for deserialization
     CBlockHeaderAndShortTxIDs() {}
@@ -191,6 +192,8 @@ public:
 
         if (ser_action.ForRead())
             FillShortTxIDSelector();
+
+        READWRITE(vchBlockSig);
     }
 };
 
@@ -201,6 +204,7 @@ protected:
     CTxMemPool* pool;
 public:
     CBlockHeader header;
+    std::vector<uint8_t> vchBlockSig;
     explicit PartiallyDownloadedBlock(CTxMemPool* poolIn) : pool(poolIn) {}
 
     // extra_txn is a list of extra transactions to look at, in <witness hash, reference> form

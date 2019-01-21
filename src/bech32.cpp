@@ -166,7 +166,9 @@ std::pair<std::string, data> Decode(const std::string& str) {
     }
     if (lower && upper) return {};
     size_t pos = str.rfind('1');
-    if (str.size() > 90 || pos == str.npos || pos == 0 || pos + 7 > str.size()) {
+    if (str.size() > 140 || pos == str.npos || pos == 0 || pos + 7 > str.size()
+        || pos > 83) // hrp: 1 to 83 ascii chars
+        {
         return {};
     }
     data values(str.size() - 1 - pos);
@@ -177,6 +179,7 @@ std::pair<std::string, data> Decode(const std::string& str) {
         if (rev == -1) {
             return {};
         }
+        //1", "b", "i", and "o"[4].
         values[i] = rev;
     }
     std::string hrp;

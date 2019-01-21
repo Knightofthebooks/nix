@@ -39,6 +39,7 @@ public:
         Abandoned,          /**< Abandoned from the wallet **/
         /// Generated (mined) transactions
         Immature,           /**< Mined but waiting for maturity */
+        Ghosting,
         NotAccepted         /**< Mined but not accepted */
     };
 
@@ -81,7 +82,9 @@ public:
         SendToOther,
         RecvWithAddress,
         RecvFromOther,
-        SendToSelf
+        SendToSelf,
+        Ghosted,
+        UnGhosted
     };
 
     /** Number of confirmation recommended for accepting a transaction */
@@ -131,7 +134,7 @@ public:
     bool involvesWatchAddress;
 
     /** Return the unique identifier for this transaction (part) */
-    QString getTxHash() const;
+    QString getTxID() const;
 
     /** Return the output index of the subtransaction  */
     int getOutputIndex() const;

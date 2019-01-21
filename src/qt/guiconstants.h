@@ -46,10 +46,10 @@ static const int MAX_URI_LENGTH = 255;
 /* Number of frames in spinner animation */
 #define SPINNER_FRAMES 36
 
-#define QAPP_ORG_NAME "Bitcoin"
-#define QAPP_ORG_DOMAIN "bitcoin.org"
-#define QAPP_APP_NAME_DEFAULT "Bitcoin-Qt"
-#define QAPP_APP_NAME_TESTNET "Bitcoin-Qt-testnet"
-#define QAPP_APP_NAME_REGTEST "Bitcoin-Qt-regtest"
+#define QAPP_ORG_NAME "NIX"
+#define QAPP_ORG_DOMAIN "nixplatform.io"
+#define QAPP_APP_NAME_DEFAULT "NIX-Qt"
+#define QAPP_APP_NAME_TESTNET "NIX-Qt-testnet"
+#define QAPP_APP_NAME_REGTEST "NIX-Qt-regtest"
 
 #endif // BITCOIN_QT_GUICONSTANTS_H

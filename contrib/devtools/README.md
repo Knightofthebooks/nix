@@ -79,6 +79,22 @@ gen-manpages.sh
 A small script to automatically create manpages in ../../doc/man by running the release binaries with the -help option.
 This requires help2man which can be found at: https://www.gnu.org/software/help2man/
 
+====================
+
+Run this script from the root of the repository to verify that a subtree matches the contents of
+the commit it claims to have been updated to.
+
+To use, make sure that you have fetched the upstream repository branch in which the subtree is
+maintained:
+* for `src/secp256k1`: https://github.com/bitcoin-core/secp256k1.git (branch master)
+* for `src/leveldb`: https://github.com/bitcoin-core/leveldb.git (branch bitcoin-fork)
+* for `src/univalue`: https://github.com/bitcoin-core/univalue.git (branch master)
+* for `src/crypto/ctaes`: https://github.com/bitcoin-core/ctaes.git (branch master)
+
+Usage: `git-subtree-check.sh DIR (COMMIT)`
+
+`COMMIT` may be omitted, in which case `HEAD` is used.
+=======
 With in-tree builds this tool can be run from any directory within the
 repostitory. To use this tool with out-of-tree builds set `BUILDDIR`. For
 example:
@@ -167,7 +183,7 @@ still compatible with the minimum supported Linux distribution versions.
 
 Example usage after a gitian build:
 
-    find ../gitian-builder/build -type f -executable | xargs python contrib/devtools/symbol-check.py 
+    find ../gitian-builder/build -type f -executable | xargs python contrib/devtools/symbol-check.py
 
 If only supported symbols are used the return value will be 0 and the output will be empty.
 

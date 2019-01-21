@@ -104,7 +104,7 @@ enum
     //
     SCRIPT_VERIFY_MINIMALIF = (1U << 13),
 
-    // Signature(s) must be empty vector if a CHECK(MULTI)SIG operation failed
+    // Signature(s) must be empty vector if an CHECK(MULTI)SIG operation failed
     //
     SCRIPT_VERIFY_NULLFAIL = (1U << 14),
 
@@ -128,10 +128,10 @@ struct PrecomputedTransactionData
     explicit PrecomputedTransactionData(const T& tx);
 };
 
-enum class SigVersion
+enum SigVersion
 {
-    BASE = 0,
-    WITNESS_V0 = 1,
+    SIGVERSION_BASE = 0,
+    SIGVERSION_WITNESS_V0 = 1,
 };
 
 /** Signature hash sizes */
@@ -158,6 +158,10 @@ public:
     {
          return false;
     }
+    virtual bool IsCoinStake() const
+    {
+        return false;
+    }
 
     virtual ~BaseSignatureChecker() {}
 };
@@ -180,6 +184,10 @@ public:
     bool CheckSig(const std::vector<unsigned char>& scriptSig, const std::vector<unsigned char>& vchPubKey, const CScript& scriptCode, SigVersion sigversion) const override;
     bool CheckLockTime(const CScriptNum& nLockTime) const override;
     bool CheckSequence(const CScriptNum& nSequence) const override;
+    virtual bool IsCoinStake() const override
+    {
+        return txTo && txTo->IsCoinStake();
+    }
 };
 
 using TransactionSignatureChecker = GenericTransactionSignatureChecker<CTransaction>;
@@ -190,6 +198,13 @@ bool VerifyScript(const CScript& scriptSig, const CScript& scriptPubKey, const C
 
 size_t CountWitnessSigOps(const CScript& scriptSig, const CScript& scriptPubKey, const CScriptWitness* witness, unsigned int flags);
 
+bool HasIsCoinstakeOp(const CScript &script);
+
+bool GetCoinstakeScriptPath(const CScript &scriptIn, CScript &scriptOut);
+bool GetNonCoinstakeScriptPath(const CScript &scriptIn, CScript &scriptOut);
+bool SplitConditionalCoinstakeScript(const CScript &scriptIn, CScript &scriptOutA, CScript &scriptOutB);
+bool GetCoinstakeScriptFee(const CScript &scriptIn, int64_t &feeOut);
+bool GetCoinstakeScriptFeeRewardAddress(const CScript &scriptIn, CScript &scriptOut);
 int FindAndDelete(CScript& script, const CScript& b);
 
 #endif // BITCOIN_SCRIPT_INTERPRETER_H

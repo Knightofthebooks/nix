@@ -42,7 +42,7 @@ public:
     }
 
     template<typename T>
-    OverrideStream<Stream>& operator>>(T&& obj)
+    OverrideStream<Stream>& operator>>(T& obj)
     {
         // Unserialize from this stream
         ::Unserialize(*this, obj);
@@ -77,7 +77,7 @@ class CVectorWriter
  * @param[in]  nVersionIn Serialization Version (including any flags)
  * @param[in]  vchDataIn  Referenced byte vector to overwrite/append
  * @param[in]  nPosIn Starting position. Vector index where writes should start. The vector will initially
- *                    grow as necessary to max(nPosIn, vec.size()). So to append, use vec.size().
+ *                    grow as necessary to  max(nPosIn, vec.size()). So to append, use vec.size().
 */
     CVectorWriter(int nTypeIn, int nVersionIn, std::vector<unsigned char>& vchDataIn, size_t nPosIn) : nType(nTypeIn), nVersion(nVersionIn), vchData(vchDataIn), nPos(nPosIn)
     {
@@ -456,7 +456,7 @@ public:
     }
 
     template<typename T>
-    CDataStream& operator>>(T&& obj)
+    CDataStream& operator>>(T& obj)
     {
         // Unserialize from this stream
         ::Unserialize(*this, obj);
@@ -693,7 +693,7 @@ public:
     }
 
     template<typename T>
-    CAutoFile& operator>>(T&& obj)
+    CAutoFile& operator>>(T& obj)
     {
         // Unserialize from this stream
         if (!file)
@@ -836,7 +836,7 @@ public:
     }
 
     template<typename T>
-    CBufferedFile& operator>>(T&& obj) {
+    CBufferedFile& operator>>(T& obj) {
         // Unserialize from this stream
         ::Unserialize(*this, obj);
         return (*this);

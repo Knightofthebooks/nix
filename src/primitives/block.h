@@ -9,6 +9,7 @@
 #include <primitives/transaction.h>
 #include <serialize.h>
 #include <uint256.h>
+#include "crypto/Lyra2RE/Lyra2RE.h"
 
 /** Nodes collect new transactions into a block, hash them into a hash tree,
  * and scan through nonce values to make the block's hash satisfy proof-of-work
@@ -21,6 +22,7 @@ class CBlockHeader
 {
 public:
     // header
+    static const int CURRENT_VERSION = 0x02;
     int32_t nVersion;
     uint256 hashPrevBlock;
     uint256 hashMerkleRoot;
@@ -47,7 +49,7 @@ public:
 
     void SetNull()
     {
-        nVersion = 0;
+        nVersion = CURRENT_VERSION;
         hashPrevBlock.SetNull();
         hashMerkleRoot.SetNull();
         nTime = 0;
@@ -62,12 +64,15 @@ public:
 
     uint256 GetHash() const;
 
+    uint256 GetPoWHash(int nHeight) const;
+
     int64_t GetBlockTime() const
     {
         return (int64_t)nTime;
     }
 };
 
+class CZerocoinTxInfo;
 
 class CBlock : public CBlockHeader
 {
@@ -75,19 +80,38 @@ public:
     // network and disk
     std::vector<CTransactionRef> vtx;
 
+    // pos block signature - signed by one of the coin stake txout[N]'s owner
+    std::vector<uint8_t> vchBlockSig;
+
     // memory only
+    mutable CTxOut txoutGhostnode; // ghostnode payment
+    mutable std::vector<CTxOut> voutSuperblock; // superblock payment
     mutable bool fChecked;
+
+    // memory only, zerocoin tx info
+    mutable std::shared_ptr<CZerocoinTxInfo> zerocoinTxInfo;
 
     CBlock()
     {
+        zerocoinTxInfo = NULL;
         SetNull();
     }
 
     CBlock(const CBlockHeader &header)
     {
+        zerocoinTxInfo = NULL;
         SetNull();
-        *(static_cast<CBlockHeader*>(this)) = header;
+        *((CBlockHeader*)this) = header;
     }
+
+    bool IsProofOfStake() const
+    {
+        return (vtx.size() > 0 && vtx[0]->IsCoinStake());
+    }
+
+    ~CBlock() {
+         ZerocoinClean();
+     }
 
     ADD_SERIALIZE_METHODS;
 
@@ -95,12 +119,19 @@ public:
     inline void SerializationOp(Stream& s, Operation ser_action) {
         READWRITEAS(CBlockHeader, *this);
         READWRITE(vtx);
+
+        //Write PoS owner signature to block
+        if (this->IsProofOfStake())
+            READWRITE(vchBlockSig);
     }
 
     void SetNull()
     {
+        ZerocoinClean();
         CBlockHeader::SetNull();
         vtx.clear();
+        txoutGhostnode = CTxOut();
+        voutSuperblock.clear();
         fChecked = false;
     }
 
@@ -117,6 +148,8 @@ public:
     }
 
     std::string ToString() const;
+
+    void ZerocoinClean() const;
 };
 
 /** Describes a place in the block chain to another node such that if the
@@ -135,11 +168,11 @@ struct CBlockLocator
 
     template <typename Stream, typename Operation>
     inline void SerializationOp(Stream& s, Operation ser_action) {
-        int nVersion = s.GetVersion();
-        if (!(s.GetType() & SER_GETHASH))
-            READWRITE(nVersion);
-        READWRITE(vHave);
-    }
+            int nVersion = s.GetVersion();
+            if (!(s.GetType() & SER_GETHASH))
+                READWRITE(nVersion);
+            READWRITE(vHave);
+        }
 
     void SetNull()
     {

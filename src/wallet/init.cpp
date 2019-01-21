@@ -68,6 +68,22 @@ void WalletInit::AddWalletOptions() const
     gArgs.AddArg("-flushwallet", strprintf("Run a thread to flush wallet periodically (default: %u)", DEFAULT_FLUSHWALLET), true, OptionsCategory::WALLET_DEBUG_TEST);
     gArgs.AddArg("-privdb", strprintf("Sets the DB_PRIVATE flag in the wallet db environment (default: %u)", DEFAULT_WALLET_PRIVDB), true, OptionsCategory::WALLET_DEBUG_TEST);
     gArgs.AddArg("-walletrejectlongchains", strprintf("Wallet will not create transactions that violate mempool chain limits (default: %u)", DEFAULT_WALLET_REJECT_LONG_CHAINS), true, OptionsCategory::WALLET_DEBUG_TEST);
+
+    gArgs.AddArg("-staking", strprintf("Stake your coins to support network and gain reward (default: true)"));
+    gArgs.AddArg("-stakingthreads", strprintf("Number of threads to start for staking, max 1 per active wallet, will divide wallets evenly between threads (default: 1)"));
+    gArgs.AddArg("-minstakeinterval=<n>", strprintf("Minimum time in seconds between successful stakes (default: 0)"));
+    gArgs.AddArg("-minersleep=<n>", strprintf("Milliseconds between stake attempts. Lowering this param will not result in more stakes. (default: 500)"));
+    gArgs.AddArg("-reservebalance=<amount>", strprintf("Ensure available balance remains above reservebalance. (default: 0)"));
+    gArgs.AddArg("-donationpercent=<n>", strprintf("Percentage of block reward donated to the donation address. e.g. 1190 (11.90%) (default: 0)"));
+    gArgs.AddArg("-donationaddress=<n>", strprintf("Destination to send donated staking rewards. (default: N/A)"));
+    gArgs.AddArg("-stakesplitthreshold=<n>", strprintf("Maximum amount of coins to stake before splitting into two outputs. (default: 20000)"));
+    gArgs.AddArg("-stakecombinethreshold=<n>", strprintf("Minimum amount of NIX to combine into one stake if wallet has multiple outputs to stake. (default: 5000)"));
+    gArgs.AddArg("-maxstakecombine=<n>", strprintf("Maximim of outputs to combine when achieving stakecombinethreshold. (default: 3)"));
+    gArgs.AddArg("-coldstakeaddress=<n>", strprintf("Coldstaking address used for smart contract staking. To be used for local wallet setup. (default: "" (None)"));
+    gArgs.AddArg("-minimumleasepercentage=<n>", strprintf("Minimum lease percentage required for a contract to stake if you are leasing stakes. Value can be between 0 and 10000 e.g. 1191 (11.91%) (default: 0"));
+    gArgs.AddArg("-leaserewardaddresses=<n>", strprintf("Stake only LPoS contracts with reward fee addresses specified by this command. e.g. x1,x2,x3 (default: \"\""));
+    gArgs.AddArg("-leaserewardtome=<n>", strprintf("Stake only LPoS contracts with reward fee addresses that this local wallet owns <true/false> (default: false)"));
+
 }
 
 bool WalletInit::ParameterInteraction() const
@@ -142,6 +158,18 @@ bool WalletInit::ParameterInteraction() const
         }
     }
 
+    g_address_type = ParseOutputType(gArgs.GetArg("-addresstype", ""));
+    if (g_address_type == OUTPUT_TYPE_NONE) {
+        return InitError(strprintf("Unknown address type '%s'", gArgs.GetArg("-addresstype", "")));
+    }
+
+    // If changetype is set in config file or parameter, check that it's valid.
+    // Default to OUTPUT_TYPE_NONE if not set.
+    g_change_type = ParseOutputType(gArgs.GetArg("-changetype", ""), OUTPUT_TYPE_DEFAULT);
+    if (g_change_type == OUTPUT_TYPE_DEFAULT && !gArgs.GetArg("-changetype", "").empty()) {
+        return InitError(strprintf("Unknown change type '%s'", gArgs.GetArg("-changetype", "")));
+    }
+
     return true;
 }
 
@@ -195,6 +223,7 @@ bool VerifyWallets(interfaces::Chain& chain, const std::vector<std::string>& wal
 
 void WalletInit::Construct(InitInterfaces& interfaces) const
 {
+    //return CWallet::InitLoadWallet();
     if (gArgs.GetBoolArg("-disablewallet", DEFAULT_DISABLE_WALLET)) {
         LogPrintf("Wallet disabled!\n");
         return;

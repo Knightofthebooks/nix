@@ -6,10 +6,14 @@
 #include <script/ismine.h>
 
 #include <key.h>
+#include <ghost-address/extkey.h>
+#include <ghost-address/stealth.h>
 #include <keystore.h>
 #include <script/script.h>
+#include <script/standard.h>
 #include <script/sign.h>
 
+//typedef std::vector<unsigned char> valtype;
 
 typedef std::vector<unsigned char> valtype;
 
@@ -59,16 +63,43 @@ IsMineResult IsMineInner(const CKeyStore& keystore, const CScript& scriptPubKey,
 {
     IsMineResult ret = IsMineResult::NO;
 
+    if (HasIsCoinstakeOp(scriptPubKey))
+    {
+        CScript scriptA, scriptB;
+        if (!SplitConditionalCoinstakeScript(scriptPubKey, scriptA, scriptB))
+            return ISMINE_NO;
+
+        //Pull out owner address
+        isminetype typeB = IsMine(keystore, scriptB, isInvalid, sigversion);
+        if (typeB & ISMINE_SPENDABLE)
+            return typeB;
+
+        //Pull out coldstaking address
+        isminetype typeA = IsMine(keystore, scriptA, isInvalid, sigversion);
+        if (typeA & ISMINE_SPENDABLE)
+        {
+            int ia = (int)typeA;
+            ia &= ~ISMINE_SPENDABLE;
+            ia |= ISMINE_WATCH_COLDSTAKE;
+            typeA = (isminetype)ia;
+        }
+
+        return (isminetype)((int)typeA | (int)typeB);
+    }
+
     std::vector<valtype> vSolutions;
     txnouttype whichType = Solver(scriptPubKey, vSolutions);
 
     CKeyID keyID;
+
+    isminetype mine = ISMINE_NO;
     switch (whichType)
     {
     case TX_NONSTANDARD:
     case TX_NULL_DATA:
     case TX_WITNESS_UNKNOWN:
         break;
+    case TX_ZEROCOINMINT:
     case TX_PUBKEY:
         keyID = CPubKey(vSolutions[0]).GetID();
         if (!PermitsUncompressed(sigversion) && vSolutions[0].size() != 33) {
@@ -106,6 +137,8 @@ IsMineResult IsMineInner(const CKeyStore& keystore, const CScript& scriptPubKey,
         }
         break;
     case TX_SCRIPTHASH:
+    case TX_TIMELOCKED_SCRIPTHASH:
+    case TX_SCRIPTHASH256:
     {
         if (sigversion != IsMineSigVersion::TOP) {
             // P2SH inside P2WSH or P2SH is invalid.
@@ -138,6 +171,7 @@ IsMineResult IsMineInner(const CKeyStore& keystore, const CScript& scriptPubKey,
     }
 
     case TX_MULTISIG:
+    case TX_TIMELOCKED_MULTISIG:
     {
         // Never treat bare multisig outputs as ours (they can still be made watchonly-though)
         if (sigversion == IsMineSigVersion::TOP) {
@@ -162,6 +196,8 @@ IsMineResult IsMineInner(const CKeyStore& keystore, const CScript& scriptPubKey,
         }
         break;
     }
+    default:
+        break;
     }
 
     if (ret == IsMineResult::NO && keystore.HaveWatchOnly(scriptPubKey)) {

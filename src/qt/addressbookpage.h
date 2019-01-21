@@ -7,7 +7,6 @@
 
 #include <QDialog>
 
-class AddressBookSortFilterProxyModel;
 class AddressTableModel;
 class PlatformStyle;
 
@@ -19,8 +18,10 @@ QT_BEGIN_NAMESPACE
 class QItemSelection;
 class QMenu;
 class QModelIndex;
+class QSortFilterProxyModel;
 QT_END_NAMESPACE
 
+class WalletModel;
 /** Widget that shows a list of sending or receiving addresses.
   */
 class AddressBookPage : public QDialog
@@ -42,6 +43,7 @@ public:
     ~AddressBookPage();
 
     void setModel(AddressTableModel *model);
+    void setWalletModel(WalletModel *_model);
     const QString &getReturnValue() const { return returnValue; }
 
 public Q_SLOTS:
@@ -53,8 +55,9 @@ private:
     Mode mode;
     Tabs tab;
     QString returnValue;
-    AddressBookSortFilterProxyModel *proxyModel;
+    QSortFilterProxyModel *proxyModel;
     QMenu *contextMenu;
+    WalletModel *walletModel;
     QAction *deleteAction; // to be able to explicitly disable it
     QString newAddressToSelect;
 
@@ -71,6 +74,8 @@ private Q_SLOTS:
     void onEditAction();
     /** Export button clicked */
     void on_exportButton_clicked();
+
+    void getPaperWallet();
 
     /** Set button states based on selected tab and selection */
     void selectionChanged();

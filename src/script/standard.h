@@ -17,6 +17,10 @@ static const bool DEFAULT_ACCEPT_DATACARRIER = true;
 
 class CKeyID;
 class CScript;
+class CStealthAddress;
+class CGhostAddress;
+class CExtKeyPair;
+class CKeyID256;
 
 /** A reference to a CScript: the Hash160 of its serialization (see script.h) */
 class CScriptID : public uint160
@@ -25,6 +29,17 @@ public:
     CScriptID() : uint160() {}
     explicit CScriptID(const CScript& in);
     CScriptID(const uint160& in) : uint160(in) {}
+
+    bool Set(const uint256& in);
+};
+
+class CScriptID256 : public uint256
+{
+public:
+    CScriptID256() : uint256() {}
+    CScriptID256(const uint256& in) : uint256(in) {}
+
+    bool Set(const CScript& in);
 };
 
 /**
@@ -65,6 +80,14 @@ enum txnouttype
     TX_WITNESS_V0_SCRIPTHASH,
     TX_WITNESS_V0_KEYHASH,
     TX_WITNESS_UNKNOWN, //!< Only for Witness versions not already defined above
+
+    TX_SCRIPTHASH256,
+    TX_PUBKEYHASH256,
+    TX_TIMELOCKED_SCRIPTHASH,
+    TX_TIMELOCKED_PUBKEYHASH,
+    TX_TIMELOCKED_MULTISIG,
+    TX_ZEROCOINMINT,
+    TX_CONDITIONAL_STAKE,
 };
 
 class CNoDestination {
@@ -120,7 +143,8 @@ struct WitnessUnknown
  *  * WitnessUnknown: TX_WITNESS_UNKNOWN destination (P2W???)
  *  A CTxDestination is the internal data type encoded in a bitcoin address
  */
-typedef boost::variant<CNoDestination, CKeyID, CScriptID, WitnessV0ScriptHash, WitnessV0KeyHash, WitnessUnknown> CTxDestination;
+typedef boost::variant<CNoDestination, CKeyID, CScriptID, WitnessV0ScriptHash, WitnessV0KeyHash, WitnessUnknown,
+    CStealthAddress, CGhostAddress, CExtKeyPair, CKeyID256, CScriptID256> CTxDestination;
 
 /** Check whether a CTxDestination is a CNoDestination. */
 bool IsValidDestination(const CTxDestination& dest);
@@ -161,6 +185,8 @@ bool ExtractDestination(const CScript& scriptPubKey, CTxDestination& addressRet)
  * CScript), and its use should be phased out.
  */
 bool ExtractDestinations(const CScript& scriptPubKey, txnouttype& typeRet, std::vector<CTxDestination>& addressRet, int& nRequiredRet);
+
+bool ExtractStakingKeyID(const CScript &scriptPubKey, CScriptID &keyID);
 
 /**
  * Generate a Bitcoin scriptPubKey for the given CTxDestination. Returns a P2PKH

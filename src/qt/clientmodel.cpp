@@ -127,9 +127,9 @@ enum BlockSource ClientModel::getBlockSource() const
     else if (m_node.getImporting())
         return BlockSource::DISK;
     else if (getNumConnections() > 0)
-        return BlockSource::NETWORK;
+        return BLOCK_SOURCE_NETWORK;
 
-    return BlockSource::NONE;
+    return BLOCK_SOURCE_NONE;
 }
 
 QString ClientModel::getStatusBarWarnings() const
@@ -201,6 +201,11 @@ static void NotifyNumConnectionsChanged(ClientModel *clientmodel, int newNumConn
     // Too noisy: qDebug() << "NotifyNumConnectionsChanged: " + QString::number(newNumConnections);
     QMetaObject::invokeMethod(clientmodel, "updateNumConnections", Qt::QueuedConnection,
                               Q_ARG(int, newNumConnections));
+}
+
+static void NotifyAdditionalDataSyncProgressChanged(ClientModel *clientmodel, int count, double nSyncProgress)
+{
+    QMetaObject::invokeMethod(clientmodel, "additionalDataSyncProgressChanged", Qt::QueuedConnection, Q_ARG(int, count),Q_ARG(double, nSyncProgress));
 }
 
 static void NotifyNetworkActiveChanged(ClientModel *clientmodel, bool networkActive)

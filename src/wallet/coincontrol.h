@@ -18,8 +18,8 @@ class CCoinControl
 public:
     //! Custom change destination, if not set an address is generated
     CTxDestination destChange;
-    //! Override the default change type if set, ignored if destChange is set
-    boost::optional<OutputType> m_change_type;
+    //! Custom change type, ignored if destChange is set, defaults to g_change_type
+    OutputType change_type;
     //! If false, allows unselected inputs, but requires all selected inputs be used
     bool fAllowOtherInputs;
     //! Includes watch only addresses which are solvable

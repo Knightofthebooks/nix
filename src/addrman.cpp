@@ -187,7 +187,7 @@ void CAddrMan::MakeTried(CAddrInfo& info, int nId)
     info.fInTried = true;
 }
 
-void CAddrMan::Good_(const CService& addr, bool test_before_evict, int64_t nTime)
+void CAddrMan::Good_(const CService& addr, int64_t nTime)
 {
     int nId;
 
@@ -233,22 +233,10 @@ void CAddrMan::Good_(const CService& addr, bool test_before_evict, int64_t nTime
     if (nUBucket == -1)
         return;
 
-    // which tried bucket to move the entry to
-    int tried_bucket = info.GetTriedBucket(nKey);
-    int tried_bucket_pos = info.GetBucketPosition(nKey, false, tried_bucket);
+    LogPrint(BCLog::ADDRMAN, "Moving %s to tried\n", addr.ToString());
 
-    // Will moving this address into tried evict another entry?
-    if (test_before_evict && (vvTried[tried_bucket][tried_bucket_pos] != -1)) {
-        LogPrint(BCLog::ADDRMAN, "Collision inserting element into tried table, moving %s to m_tried_collisions=%d\n", addr.ToString(), m_tried_collisions.size());
-        if (m_tried_collisions.size() < ADDRMAN_SET_TRIED_COLLISION_SIZE) {
-            m_tried_collisions.insert(nId);
-        }
-    } else {
-        LogPrint(BCLog::ADDRMAN, "Moving %s to tried\n", addr.ToString());
-
-        // move nId to the tried tables
-        MakeTried(info, nId);
-    }
+    // move nId to the tried tables
+    MakeTried(info, nId);
 }
 
 bool CAddrMan::Add_(const CAddress& addr, const CNetAddr& source, int64_t nTimePenalty)

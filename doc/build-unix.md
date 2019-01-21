@@ -1,13 +1,13 @@
 UNIX BUILD NOTES
 ====================
-Some notes on how to build Bitcoin Core in Unix.
+Some notes on how to build NIX Core in Unix.
 
 (For BSD specific instructions, see `build-*bsd.md` in this directory.)
 
 Note
 ---------------------
-Always use absolute paths to configure and compile Bitcoin Core and the dependencies.
-For example, when specifying the path of the dependency:
+Always use absolute paths to configure and compile NIX Core and the dependencies,
+for example, when specifying the path of the dependency:
 
 	../dist/configure --enable-cxx --disable-shared --with-pic --prefix=$BDB_PREFIX
 
@@ -20,11 +20,11 @@ To Build
 ```bash
 ./autogen.sh
 ./configure
-make
+make CFLAGS=-fPIC
 make install # optional
 ```
 
-This will build bitcoin-qt as well, if the dependencies are met.
+This will build nix-qt as well if the dependencies are met.
 
 Dependencies
 ---------------------
@@ -55,30 +55,25 @@ Memory Requirements
 --------------------
 
 C++ compilers are memory-hungry. It is recommended to have at least 1.5 GB of
-memory available when compiling Bitcoin Core. On systems with less, gcc can be
+memory available when compiling NIX Core. On systems with less, gcc can be
 tuned to conserve memory with additional CXXFLAGS:
 
 
     ./configure CXXFLAGS="--param ggc-min-expand=1 --param ggc-min-heapsize=32768"
 
-
-## Linux Distribution Specific Instructions
-
-### Ubuntu & Debian
-
-#### Dependency Build Instructions
-
+Dependency Build Instructions: Ubuntu & Debian
+----------------------------------------------
 Build requirements:
 
     sudo apt-get install build-essential libtool autotools-dev automake pkg-config bsdmainutils python3
 
 Now, you can either build from self-compiled [depends](/depends/README.md) or install the required dependencies:
 
-    sudo apt-get install libssl-dev libevent-dev libboost-system-dev libboost-filesystem-dev libboost-chrono-dev libboost-test-dev libboost-thread-dev
+    sudo apt-get install libssl-dev libevent-dev libboost-system-dev libboost-filesystem-dev libboost-chrono-dev libboost-test-dev libboost-thread-dev libseccomp-dev libcap-dev
 
 BerkeleyDB is required for the wallet.
 
-**For Ubuntu only:** db4.8 packages are available [here](https://launchpad.net/~bitcoin/+archive/bitcoin).
+**For Ubuntu only:** db4.8 packages are available [here](https://launchpad.net/~nix/+archive/nix).
 You can add the repository and install using the following commands:
 
     sudo apt-get install software-properties-common
@@ -91,7 +86,7 @@ BerkeleyDB 5.1 or later. This will break binary wallet compatibility with the di
 are based on BerkeleyDB 4.8. If you do not care about wallet compatibility,
 pass `--with-incompatible-bdb` to configure.
 
-To build Bitcoin Core without wallet, see [*Disable-wallet mode*](/doc/build-unix.md#disable-wallet-mode)
+To build NIX Core without wallet, see [*Disable-wallet mode*](/doc/build-unix.md#disable-wallet-mode)
 
 
 Optional (see --with-miniupnpc and --enable-upnp-default):
@@ -104,7 +99,7 @@ ZMQ dependencies (provides ZMQ API):
 
 GUI dependencies:
 
-If you want to build bitcoin-qt, make sure that the required packages for Qt development
+If you want to build nix-qt, make sure that the required packages for Qt development
 are installed. Qt 5 is necessary to build the GUI.
 To build without GUI pass `--without-gui`.
 
@@ -116,14 +111,11 @@ libqrencode (optional) can be installed with:
 
     sudo apt-get install libqrencode-dev
 
-Once these are installed, they will be found by configure and a bitcoin-qt executable will be
+Once these are installed, they will be found by configure and a nix-qt executable will be
 built by default.
 
-
-### Fedora
-
-#### Dependency Build Instructions
-
+Dependency Build Instructions: Fedora
+-------------------------------------
 Build requirements:
 
     sudo dnf install gcc-c++ libtool make autoconf automake openssl-devel libevent-devel boost-devel libdb4-devel libdb4-cxx-devel python3
@@ -142,7 +134,7 @@ libqrencode (optional) can be installed with:
 
 Notes
 -----
-The release is built with GCC and then "strip bitcoind" to strip the debug
+The release is built with GCC and then "strip nixd" to strip the debug
 symbols, which reduces the executable size by about 90%.
 
 
@@ -183,7 +175,7 @@ If you need to build Boost yourself:
 
 Security
 --------
-To help make your Bitcoin Core installation more secure by making certain attacks impossible to
+To help make your NIX Core installation more secure by making certain attacks impossible to
 exploit even if a vulnerability is found, binaries are hardened by default.
 This can be disabled with:
 
@@ -205,7 +197,7 @@ Hardening enables the following features:
 
     To test that you have built PIE executable, install scanelf, part of paxutils, and use:
 
-    	scanelf -e ./bitcoin
+    	scanelf -e ./nix
 
     The output should contain:
 
@@ -213,13 +205,13 @@ Hardening enables the following features:
     ET_DYN
 
 * _Non-executable Stack_: If the stack is executable then trivial stack-based buffer overflow exploits are possible if
-    vulnerable buffers are found. By default, Bitcoin Core should be built with a non-executable stack,
+    vulnerable buffers are found. By default, NIX Core should be built with a non-executable stack,
     but if one of the libraries it uses asks for an executable stack or someone makes a mistake
     and uses a compiler extension which requires an executable stack, it will silently build an
     executable without the non-executable stack protection.
 
     To verify that the stack is non-executable after compiling use:
-    `scanelf -e ./bitcoin`
+    `scanelf -e ./nix`
 
     The output should contain:
 	STK/REL/PTL
@@ -229,7 +221,7 @@ Hardening enables the following features:
 
 Disable-wallet mode
 --------------------
-When the intention is to run only a P2P node without a wallet, Bitcoin Core may be compiled in
+When the intention is to run only a P2P node without a wallet, NIX Core may be compiled in
 disable-wallet mode with:
 
     ./configure --disable-wallet
@@ -250,8 +242,8 @@ Setup and Build Example: Arch Linux
 This example lists the steps necessary to setup and build a command line only, non-wallet distribution of the latest changes on Arch Linux:
 
     pacman -S git base-devel boost libevent python
-    git clone https://github.com/bitcoin/bitcoin.git
-    cd bitcoin/
+    git clone https://github.com/nix/nix.git
+    cd nix/
     ./autogen.sh
     ./configure --disable-wallet --without-gui --without-miniupnpc
     make check
@@ -259,8 +251,8 @@ This example lists the steps necessary to setup and build a command line only, n
 Note:
 Enabling wallet support requires either compiling against a Berkeley DB newer than 4.8 (package `db`) using `--with-incompatible-bdb`,
 or building and depending on a local version of Berkeley DB 4.8. The readily available Arch Linux packages are currently built using
-`--with-incompatible-bdb` according to the [PKGBUILD](https://projects.archlinux.org/svntogit/community.git/tree/bitcoin/trunk/PKGBUILD).
-As mentioned above, when maintaining portability of the wallet between the standard Bitcoin Core distributions and independently built
+`--with-incompatible-bdb` according to the [PKGBUILD](https://projects.archlinux.org/svntogit/community.git/tree/nix/trunk/PKGBUILD).
+As mentioned above, when maintaining portability of the wallet between the standard NIX Core distributions and independently built
 node software is desired, Berkeley DB 4.8 must be used.
 
 

@@ -33,10 +33,20 @@ const char* GetTxnOutputType(txnouttype t)
     case TX_PUBKEYHASH: return "pubkeyhash";
     case TX_SCRIPTHASH: return "scripthash";
     case TX_MULTISIG: return "multisig";
+
     case TX_NULL_DATA: return "nulldata";
     case TX_WITNESS_V0_KEYHASH: return "witness_v0_keyhash";
     case TX_WITNESS_V0_SCRIPTHASH: return "witness_v0_scripthash";
     case TX_WITNESS_UNKNOWN: return "witness_unknown";
+
+    case TX_SCRIPTHASH256: return "scripthash256";
+    case TX_PUBKEYHASH256: return "pubkeyhash256";
+    case TX_TIMELOCKED_SCRIPTHASH: return "timelocked_scripthash";
+    case TX_TIMELOCKED_PUBKEYHASH: return "timelocked_pubkeyhash";
+    case TX_TIMELOCKED_MULTISIG: return "timelocked_multisig";
+    case TX_ZEROCOINMINT: return "zerocoinmint";
+    case TX_CONDITIONAL_STAKE: return "conditional_stake";
+
     }
     return nullptr;
 }
@@ -91,11 +101,12 @@ txnouttype Solver(const CScript& scriptPubKey, std::vector<std::vector<unsigned 
 {
     vSolutionsRet.clear();
 
-    // Shortcut for pay-to-script-hash, which are more constrained than the other types:
-    // it is always OP_HASH160 20 [20 byte hash] OP_EQUAL
-    if (scriptPubKey.IsPayToScriptHash())
+    // Zerocoin
+    if (scriptPubKey.IsZerocoinMint())
     {
-        std::vector<unsigned char> hashBytes(scriptPubKey.begin()+2, scriptPubKey.begin()+22);
+        typeRet = TX_ZEROCOINMINT;
+        if(scriptPubKey.size() > 150) return false;
+        std::vector<unsigned char> hashBytes(scriptPubKey.begin()+2, scriptPubKey.end());
         vSolutionsRet.push_back(hashBytes);
         return TX_SCRIPTHASH;
     }
@@ -155,7 +166,20 @@ txnouttype Solver(const CScript& scriptPubKey, std::vector<std::vector<unsigned 
 bool ExtractDestination(const CScript& scriptPubKey, CTxDestination& addressRet)
 {
     std::vector<valtype> vSolutions;
-    txnouttype whichType = Solver(scriptPubKey, vSolutions);
+    txnouttype whichType;
+
+    if (HasIsCoinstakeOp(scriptPubKey))
+    {
+        CScript scriptB;
+        if (!GetNonCoinstakeScriptPath(scriptPubKey, scriptB))
+            return false;
+
+        // Return only the spending address
+        return ExtractDestination(scriptB, addressRet);
+    }
+
+    if (!Solver(scriptPubKey, whichType, vSolutions))
+        return false;
 
     if (whichType == TX_PUBKEY) {
         CPubKey pubKey(vSolutions[0]);
@@ -165,12 +189,12 @@ bool ExtractDestination(const CScript& scriptPubKey, CTxDestination& addressRet)
         addressRet = pubKey.GetID();
         return true;
     }
-    else if (whichType == TX_PUBKEYHASH)
+    else if (whichType == TX_PUBKEYHASH || whichType == TX_TIMELOCKED_PUBKEYHASH)
     {
         addressRet = CKeyID(uint160(vSolutions[0]));
         return true;
     }
-    else if (whichType == TX_SCRIPTHASH)
+    else if (whichType == TX_SCRIPTHASH || whichType == TX_TIMELOCKED_SCRIPTHASH)
     {
         addressRet = CScriptID(uint160(vSolutions[0]));
         return true;
@@ -192,6 +216,16 @@ bool ExtractDestination(const CScript& scriptPubKey, CTxDestination& addressRet)
         addressRet = unk;
         return true;
     }
+    else if (whichType == TX_PUBKEYHASH256)
+    {
+        addressRet = CKeyID256(uint256(vSolutions[0]));
+        return true;
+    }
+    else if (whichType == TX_SCRIPTHASH256)
+    {
+        addressRet = CScriptID256(uint256(vSolutions[0]));
+        return true;
+    }
     // Multisig txns have more than one address...
     return false;
 }
@@ -200,15 +234,29 @@ bool ExtractDestinations(const CScript& scriptPubKey, txnouttype& typeRet, std::
 {
     addressRet.clear();
     std::vector<valtype> vSolutions;
-    typeRet = Solver(scriptPubKey, vSolutions);
-    if (typeRet == TX_NONSTANDARD) {
+
+
+    if (HasIsCoinstakeOp(scriptPubKey))
+    {
+        CScript scriptB;
+        if (!GetNonCoinstakeScriptPath(scriptPubKey, scriptB))
+            return false;
+
+        // Return only the spending address to keep insight working
+        ExtractDestinations(scriptB, typeRet, addressRet, nRequiredRet);
+
+        return true;
+    }
+
+    if (!Solver(scriptPubKey, typeRet, vSolutions))
         return false;
-    } else if (typeRet == TX_NULL_DATA) {
+
+    if (typeRet == TX_NULL_DATA){
         // This is data, not addresses
         return false;
     }
 
-    if (typeRet == TX_MULTISIG)
+    if (typeRet == TX_MULTISIG || typeRet == TX_TIMELOCKED_MULTISIG)
     {
         nRequiredRet = vSolutions.front()[0];
         for (unsigned int i = 1; i < vSolutions.size()-1; i++)
@@ -282,6 +330,36 @@ public:
         *script << CScript::EncodeOP_N(id.version) << std::vector<unsigned char>(id.program, id.program + id.length);
         return true;
     }
+
+    bool operator()(const CStealthAddress &ek) const {
+        script->clear();
+        LogPrintf("CScriptVisitor(CStealthAddress) TODO\n");
+        return false;
+    }
+
+    bool operator()(const CGhostAddress &ek) const {
+        script->clear();
+        LogPrintf("CScriptVisitor(CGhostAddress) TODO\n");
+        return false;
+    }
+
+    bool operator()(const CExtKeyPair &ek) const {
+        script->clear();
+        LogPrintf("CScriptVisitor(CExtKeyPair) TODO\n");
+        return false;
+    }
+
+    bool operator()(const CKeyID256 &keyID) const {
+        script->clear();
+        *script << OP_DUP << OP_SHA256 << ToByteVector(keyID) << OP_EQUALVERIFY << OP_CHECKSIG;
+        return true;
+    }
+
+    bool operator()(const CScriptID256 &scriptID) const {
+        script->clear();
+        *script << OP_SHA256 << ToByteVector(scriptID) << OP_EQUAL;
+        return true;
+    }
 };
 } // namespace
 
@@ -323,4 +401,21 @@ CScript GetScriptForWitness(const CScript& redeemscript)
 
 bool IsValidDestination(const CTxDestination& dest) {
     return dest.which() != 0;
+}
+
+bool ExtractStakingKeyID(const CScript &scriptPubKey, CScriptID &keyID)
+{
+    if (scriptPubKey.IsPayToScriptHash())
+    {
+        keyID = CScriptID(uint160(&scriptPubKey[2], 20));
+        return true;
+    };
+
+    if (scriptPubKey.IsPayToScriptHash_CS())
+    {
+        keyID = CScriptID(uint160(&scriptPubKey[4], 20));
+        return true;
+    };
+
+    return false;
 }

@@ -26,11 +26,11 @@ QT_BEGIN_NAMESPACE
 class QTimer;
 QT_END_NAMESPACE
 
-enum class BlockSource {
-    NONE,
-    REINDEX,
-    DISK,
-    NETWORK
+enum BlockSource {
+    BLOCK_SOURCE_NONE,
+    BLOCK_SOURCE_REINDEX,
+    BLOCK_SOURCE_DISK,
+    BLOCK_SOURCE_NETWORK
 };
 
 enum NumConnections {
@@ -102,6 +102,7 @@ Q_SIGNALS:
     void networkActiveChanged(bool networkActive);
     void alertsChanged(const QString &warnings);
     void bytesChanged(quint64 totalBytesIn, quint64 totalBytesOut);
+    void additionalDataSyncProgressChanged(int count, double nSyncProgress);
 
     //! Fired when a message should be reported to the user
     void message(const QString &title, const QString &message, unsigned int style);

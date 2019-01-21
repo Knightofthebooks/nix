@@ -11,8 +11,20 @@
 #include <primitives/block.h>
 #include <tinyformat.h>
 #include <uint256.h>
+#include "libzerocoin/Zerocoin.h"
 
 #include <vector>
+
+using namespace std;
+
+enum eBlockFlags
+{
+    BLOCK_PROOF_OF_STAKE            = (1 << 0), // is proof-of-stake block
+    BLOCK_STAKE_ENTROPY             = (1 << 1), // entropy bit for stake modifier
+    BLOCK_STAKE_MODIFIER            = (1 << 2), // regenerated stake modifier
+
+    BLOCK_FAILED_DUPLICATE_STAKE    = (1 << 3),
+};
 
 /**
  * Maximum amount of time that a block timestamp is allowed to exceed the
@@ -99,7 +111,7 @@ struct CDiskBlockPos
 
     template <typename Stream, typename Operation>
     inline void SerializationOp(Stream& s, Operation ser_action) {
-        READWRITE(VARINT(nFile, VarIntMode::NONNEGATIVE_SIGNED));
+        READWRITE(VARINT(nFile));
         READWRITE(VARINT(nPos));
     }
 
@@ -214,6 +226,12 @@ public:
     //! Verification status of this block. See enum BlockStatus
     uint32_t nStatus;
 
+    // proof-of-stake specific fields
+    unsigned int nFlags;  // pos: block index flags
+    uint256 bnStakeModifier; // hash modifier for proof-of-stake
+    COutPoint prevoutStake;
+    CAmount nMoneySupply;
+
     //! block header
     int32_t nVersion;
     uint256 hashMerkleRoot;
@@ -226,6 +244,17 @@ public:
 
     //! (memory only) Maximum nTime in the chain up to and including this block.
     unsigned int nTimeMax;
+
+    //! zerocoin specific fields
+    //!
+    //! Public coin values of mints in this block, ordered by serialized value of public coin
+    //! Maps <denomination,id> to vector of public coins
+    map<pair<int,int>, vector<CBigNum>> mintedPubCoins;
+    //! Accumulator updates. Contains only changes made by mints in this block
+    //! Maps <denomination, id> to <accumulator value (CBigNum), number of such mints in this block>
+    map<pair<int,int>, pair<CBigNum,int>> accumulatorChanges;
+    //! Values of coin serials spent in this block
+    set<CBigNum> spentSerials;
 
     void SetNull()
     {
@@ -243,11 +272,21 @@ public:
         nSequenceId = 0;
         nTimeMax = 0;
 
+        nFlags = 0;
+        bnStakeModifier = uint256();
+        prevoutStake.SetNull();
+        nMoneySupply = 0;
+
         nVersion       = 0;
         hashMerkleRoot = uint256();
         nTime          = 0;
         nBits          = 0;
         nNonce         = 0;
+
+        //Zerocoin params
+        mintedPubCoins.clear();
+        accumulatorChanges.clear();
+        spentSerials.clear();
     }
 
     CBlockIndex()
@@ -302,6 +341,10 @@ public:
         return *phashBlock;
     }
 
+    uint256 GetBlockPoWHash() const
+    {
+        return GetBlockHeader().GetPoWHash(nHeight);
+    }
     /**
      * Check whether this block's and all previous blocks' transactions have been
      * downloaded (and stored to disk) at some point.
@@ -319,6 +362,33 @@ public:
     int64_t GetBlockTimeMax() const
     {
         return (int64_t)nTimeMax;
+    }
+
+    bool IsProofOfStake() const
+    {
+        return (nFlags & BLOCK_PROOF_OF_STAKE);
+    }
+
+    void SetProofOfStake()
+    {
+        nFlags |= BLOCK_PROOF_OF_STAKE;
+    }
+
+    unsigned int GetStakeEntropyBit() const
+    {
+        return ((nFlags & BLOCK_STAKE_ENTROPY) >> 1);
+    }
+
+    bool SetStakeEntropyBit(unsigned int nEntropyBit)
+    {
+        if (nEntropyBit > 1)
+            return false;
+        nFlags |= (nEntropyBit? BLOCK_STAKE_ENTROPY : 0);
+        return true;
+    }
+
+    bool IsProofOfStakeHeightActive(int Height){
+        return nHeight >= Height;
     }
 
     static constexpr int nMedianTimeSpan = 11;
@@ -403,13 +473,13 @@ public:
     inline void SerializationOp(Stream& s, Operation ser_action) {
         int _nVersion = s.GetVersion();
         if (!(s.GetType() & SER_GETHASH))
-            READWRITE(VARINT(_nVersion, VarIntMode::NONNEGATIVE_SIGNED));
+            READWRITE(VARINT(_nVersion));
 
-        READWRITE(VARINT(nHeight, VarIntMode::NONNEGATIVE_SIGNED));
+        READWRITE(VARINT(nHeight));
         READWRITE(VARINT(nStatus));
         READWRITE(VARINT(nTx));
         if (nStatus & (BLOCK_HAVE_DATA | BLOCK_HAVE_UNDO))
-            READWRITE(VARINT(nFile, VarIntMode::NONNEGATIVE_SIGNED));
+            READWRITE(VARINT(nFile));
         if (nStatus & BLOCK_HAVE_DATA)
             READWRITE(VARINT(nDataPos));
         if (nStatus & BLOCK_HAVE_UNDO)
@@ -422,6 +492,20 @@ public:
         READWRITE(nTime);
         READWRITE(nBits);
         READWRITE(nNonce);
+
+        //Zerocoin params
+        READWRITE(mintedPubCoins);
+        READWRITE(accumulatorChanges);
+        READWRITE(spentSerials);
+
+        //POS params
+        if(IsProofOfStakeHeightActive(53000)){
+            READWRITE(nFlags);
+            READWRITE(bnStakeModifier);
+            READWRITE(prevoutStake);
+            READWRITE(nMoneySupply);
+        }
+
     }
 
     uint256 GetBlockHash() const

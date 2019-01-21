@@ -15,7 +15,6 @@
 #include <uint256.h>
 #include <version.h>
 
-#include <atomic>
 #include <stdint.h>
 #include <string>
 
@@ -48,10 +47,10 @@ public:
     template <typename Stream, typename Operation>
     inline void SerializationOp(Stream& s, Operation ser_action)
     {
-        READWRITE(pchMessageStart);
-        READWRITE(pchCommand);
+        READWRITE(FLATDATA(pchMessageStart));
+        READWRITE(FLATDATA(pchCommand));
         READWRITE(nMessageSize);
-        READWRITE(pchChecksum);
+        READWRITE(FLATDATA(pchChecksum));
     }
 
     char pchMessageStart[MESSAGE_START_SIZE];
@@ -238,6 +237,28 @@ extern const char *GETBLOCKTXN;
  * @since protocol version 70014 as described by BIP 152
  */
 extern const char *BLOCKTXN;
+
+//GHOSTNODE
+extern const char *TXLOCKVOTE;
+extern const char *SPORK;
+extern const char *GETSPORKS;
+extern const char *GHOSTNODEPAYMENTVOTE;
+extern const char *GHOSTNODEPAYMENTSYNC;
+extern const char *SYNCSTATUSCOUNT;
+extern const char *MNVERIFY;
+extern const char *MNPING;
+extern const char *MNANNOUNCE;
+extern const char *DSACCEPT;
+extern const char *DSQUEUE;
+extern const char *DSEG;
+extern const char *DSVIN;
+extern const char *DSSTATUSUPDATE;
+extern const char *DSSIGNFINALTX;
+extern const char *DSCOMPLETE;
+extern const char *DSFINALTX;
+extern const char *TXLOCKVOTE;
+extern const char *DSTX;
+extern const char *TXLOCKREQUEST;
 };
 
 /* Get a vector of all valid message types (see above) */
@@ -295,17 +316,16 @@ enum ServiceFlags : uint64_t {
  * Thus, generally, avoid calling with peerServices == NODE_NONE, unless
  * state-specific flags must absolutely be avoided. When called with
  * peerServices == NODE_NONE, the returned desirable service flags are
- * guaranteed to not change dependent on state - ie they are suitable for
+ * guaranteed to not change dependant on state - ie they are suitable for
  * use when describing peers which we know to be desirable, but for which
  * we do not have a confirmed set of service flags.
  *
  * If the NODE_NONE return value is changed, contrib/seeds/makeseeds.py
  * should be updated appropriately to filter for the same nodes.
  */
-ServiceFlags GetDesirableServiceFlags(ServiceFlags services);
-
-/** Set the current IBD status in order to figure out the desirable service flags */
-void SetServiceFlagsIBDCache(bool status);
+static ServiceFlags GetDesirableServiceFlags(ServiceFlags services) {
+    return ServiceFlags(NODE_NETWORK | NODE_WITNESS);
+}
 
 /**
  * A shortcut for (services & GetDesirableServiceFlags(services))
@@ -318,10 +338,10 @@ static inline bool HasAllDesirableServiceFlags(ServiceFlags services) {
 
 /**
  * Checks if a peer with the given service flags may be capable of having a
- * robust address-storage DB.
+ * robust address-storage DB. Currently an alias for checking NODE_NETWORK.
  */
 static inline bool MayHaveUsefulAddressDB(ServiceFlags services) {
-    return (services & NODE_NETWORK) || (services & NODE_NETWORK_LIMITED);
+    return services & NODE_NETWORK;
 }
 
 /** A CService with information about it as peer */
@@ -379,6 +399,16 @@ enum GetDataMsg
     MSG_WITNESS_BLOCK = MSG_BLOCK | MSG_WITNESS_FLAG, //!< Defined in BIP144
     MSG_WITNESS_TX = MSG_TX | MSG_WITNESS_FLAG,       //!< Defined in BIP144
     MSG_FILTERED_WITNESS_BLOCK = MSG_FILTERED_BLOCK | MSG_WITNESS_FLAG,
+    MSG_SPORK,
+    MSG_GHOSTNODE_PAYMENT_VOTE,
+    MSG_GHOSTNODE_PAYMENT_BLOCK,
+    MSG_GHOSTNODE_ANNOUNCE,
+    MSG_GHOSTNODE_PING,
+    MSG_GHOSTNODE_VERIFY,
+    MSG_TXLOCK_REQUEST,
+    MSG_TXLOCK_VOTE,
+    MSG_DSTX,
+    DSQUEUE,
 };
 
 /** inv message data */

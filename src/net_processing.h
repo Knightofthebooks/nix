@@ -20,33 +20,20 @@ static const unsigned int DEFAULT_BLOCK_RECONSTRUCTION_EXTRA_TXN = 100;
 /** Default for BIP61 (sending reject messages) */
 static constexpr bool DEFAULT_ENABLE_BIP61{false};
 
-class PeerLogicValidation final : public CValidationInterface, public NetEventsInterface {
+class PeerLogicValidation : public CValidationInterface, public NetEventsInterface {
 private:
     CConnman* const connman;
 
 public:
     explicit PeerLogicValidation(CConnman* connman, CScheduler &scheduler, bool enable_bip61);
 
-    /**
-     * Overridden from CValidationInterface.
-     */
     void BlockConnected(const std::shared_ptr<const CBlock>& pblock, const CBlockIndex* pindexConnected, const std::vector<CTransactionRef>& vtxConflicted) override;
-    /**
-     * Overridden from CValidationInterface.
-     */
     void UpdatedBlockTip(const CBlockIndex *pindexNew, const CBlockIndex *pindexFork, bool fInitialDownload) override;
-    /**
-     * Overridden from CValidationInterface.
-     */
     void BlockChecked(const CBlock& block, const CValidationState& state) override;
-    /**
-     * Overridden from CValidationInterface.
-     */
     void NewPoWValidBlock(const CBlockIndex *pindex, const std::shared_ptr<const CBlock>& pblock) override;
 
-    /** Initialize a peer by adding it to mapNodeState and pushing a message requesting its version */
+
     void InitializeNode(CNode* pnode) override;
-    /** Handle removal of a peer by updating various state and removing it from mapNodeState */
     void FinalizeNode(NodeId nodeid, bool& fUpdateConnectionTime) override;
     /**
     * Process protocol messages received from a given node
@@ -86,5 +73,18 @@ struct CNodeStateStats {
 
 /** Get statistics from node state */
 bool GetNodeStateStats(NodeId nodeid, CNodeStateStats &stats);
+/** Increase a node's misbehavior score. */
+void Misbehaving(NodeId nodeid, int howmuch);
+
+static void RelayTransaction(const CTransaction& tx, CConnman* connman)
+{
+    CInv inv(MSG_TX, tx.GetHash());
+    connman->ForEachNode([&inv](CNode* pnode)
+    {
+        pnode->PushInventory(inv);
+    });
+}
+
+bool IncomingBlockChecked(const CBlock &block, CValidationState &state);
 
 #endif // BITCOIN_NET_PROCESSING_H

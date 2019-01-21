@@ -136,10 +136,23 @@ const char* GetOpName(opcodetype opcode)
     case OP_NOP6                   : return "OP_NOP6";
     case OP_NOP7                   : return "OP_NOP7";
     case OP_NOP8                   : return "OP_NOP8";
-    case OP_NOP9                   : return "OP_NOP9";
-    case OP_NOP10                  : return "OP_NOP10";
+    //case OP_NOP9                 : return "OP_NOP9";
+    //case OP_NOP10                : return "OP_NOP10";
 
+    case OP_KEYLOCKVERIFY          : return "OP_KEYLOCKVERIFY";
     case OP_INVALIDOPCODE          : return "OP_INVALIDOPCODE";
+
+
+    // zerocoin
+    case OP_ZEROCOINMINT           : return "OP_ZEROCOINMINT";
+    case OP_ZEROCOINSPEND          : return "OP_ZEROCOINSPEND";
+
+    case OP_ISCOINSTAKE            : return "OP_ISCOINSTAKE";
+
+    // Note:
+    //  The template matching params OP_SMALLINTEGER/etc are defined in opcodetype enum
+    //  as kind of implementation hack, they are *NOT* real opcodes.  If found in real
+    //  Script, just let the default: case deal with them.
 
     default:
         return "OP_UNKNOWN";
@@ -172,7 +185,7 @@ unsigned int CScript::GetSigOpCount(bool fAccurate) const
 
 unsigned int CScript::GetSigOpCount(const CScript& scriptSig) const
 {
-    if (!IsPayToScriptHash())
+    if (!IsPayToScriptHashAny())
         return GetSigOpCount(true);
 
     // This is a pay-to-script-hash scriptPubKey;
@@ -194,6 +207,41 @@ unsigned int CScript::GetSigOpCount(const CScript& scriptSig) const
     return subscript.GetSigOpCount(true);
 }
 
+bool CScript::IsPayToPublicKeyHash() const
+{
+    // Extra-fast test for pay-to-pubkey-hash CScripts:
+    return (this->size() == 25 &&
+        (*this)[0] == OP_DUP &&
+        (*this)[1] == OP_HASH160 &&
+        (*this)[2] == 0x14 &&
+        (*this)[23] == OP_EQUALVERIFY &&
+        (*this)[24] == OP_CHECKSIG);
+}
+
+bool CScript::IsNormalPaymentScript() const
+{
+    if(this->size() != 25) return false;
+
+    std::string str;
+    opcodetype opcode;
+    const_iterator pc = begin();
+    int i = 0;
+    while (pc < end())
+    {
+        GetOp(pc, opcode);
+
+        if(     i == 0 && opcode != OP_DUP) return false;
+        else if(i == 1 && opcode != OP_HASH160) return false;
+        else if(i == 3 && opcode != OP_EQUALVERIFY) return false;
+        else if(i == 4 && opcode != OP_CHECKSIG) return false;
+        else if(i == 5) return false;
+
+        i++;
+    }
+
+    return true;
+}
+
 bool CScript::IsPayToScriptHash() const
 {
     // Extra-fast test for pay-to-script-hash CScripts:
@@ -201,6 +249,68 @@ bool CScript::IsPayToScriptHash() const
             (*this)[0] == OP_HASH160 &&
             (*this)[1] == 0x14 &&
             (*this)[22] == OP_EQUAL);
+}
+
+bool CScript::MatchPayToScriptHash(size_t ofs) const
+{
+    // Extra-fast test for pay-to-script-hash CScripts:
+    return (this->size() - ofs >= 23 &&
+        (*this)[ofs+0] == OP_HASH160 &&
+        (*this)[ofs+1] == 0x14 &&
+        (*this)[ofs+22] == OP_EQUAL);
+}
+
+bool CScript::MatchPayToPublicKeyHash(size_t ofs) const
+{
+    // Extra-fast test for pay-to-script-hash CScripts:
+    return (this->size() - ofs >= 25 &&
+            (*this)[ofs + 0] == OP_DUP &&
+            (*this)[ofs + 1] == OP_HASH160 &&
+            (*this)[ofs + 2] == 0x14 &&
+            (*this)[ofs + 23] == OP_EQUALVERIFY &&
+            (*this)[ofs + 24] == OP_CHECKSIG);
+}
+
+bool CScript::IsPayToPublicKeyHash256() const
+{
+    // Extra-fast test for pay-to-pubkey-hash CScripts:
+    return (this->size() == 37 && MatchPayToPublicKeyHash256(0));
+}
+
+bool CScript::MatchPayToPublicKeyHash256(size_t ofs) const
+{
+    // Extra-fast test for pay-to-pubkey-hash CScripts:
+    return (this->size() - ofs >= 37 &&
+        (*this)[ofs+0] == OP_DUP &&
+        (*this)[ofs+1] == OP_SHA256 &&
+        (*this)[ofs+2] == 0x20 &&
+        (*this)[ofs+35] == OP_EQUALVERIFY &&
+        (*this)[ofs+36] == OP_CHECKSIG);
+}
+
+bool CScript::IsPayToScriptHash256() const
+{
+    // Extra-fast test for pay-to-script-hash CScripts:
+    return (this->size() == 35 && MatchPayToScriptHash256(0));
+}
+
+bool CScript::MatchPayToScriptHash256(size_t ofs) const
+{
+    // Extra-fast test for pay-to-script-hash CScripts:
+    return (this->size() - ofs >= 35 &&
+        (*this)[ofs+0] == OP_SHA256 &&
+        (*this)[ofs+1] == 0x20 &&
+        (*this)[ofs+34] == OP_EQUAL);
+}
+
+bool CScript::IsPayToTimeLockedScriptHash() const
+{
+    // Extra-fast test for pay-to-script-hash CScripts:
+    int offset = 7;
+    return (this->size() == 30 &&
+            (*this)[offset + 0] == OP_HASH160 &&
+            (*this)[offset + 1] == 0x14 &&
+            (*this)[offset + 22] == OP_EQUAL);
 }
 
 bool CScript::IsPayToWitnessScriptHash() const
@@ -227,6 +337,21 @@ bool CScript::IsWitnessProgram(int& version, std::vector<unsigned char>& program
         return true;
     }
     return false;
+}
+
+bool CScript::IsPayToScriptHash_CS() const
+{
+    //3 options:
+    //Only delegate address
+    //Only delegate address and fee percent
+    //All delegate address, fee percent, and delegate reward address
+    return (this->size() == 50 || this->size() == 57 || this->size() == 76 || this->size() == 79)
+        && (*this)[0] == OP_ISCOINSTAKE
+        && (*this)[1] == OP_IF
+        && MatchPayToScriptHash(2)
+        && (*this)[25] == OP_ELSE
+        && MatchPayToScriptHash(26)
+        && (*this)[49] == OP_ENDIF;
 }
 
 bool CScript::IsPushOnly(const_iterator pc) const
@@ -274,6 +399,19 @@ bool CScript::HasValidOps() const
         }
     }
     return true;
+}
+
+//Zerocoin params
+bool CScript::IsZerocoinMint() const
+{
+    // Extra-fast test for Zerocoin Mint CScripts:
+    return (this->size() > 0 &&
+            (*this)[0] == OP_ZEROCOINMINT);
+}
+
+bool CScript::IsZerocoinSpend() const {
+    return (this->size() > 0 &&
+            (*this)[0] == OP_ZEROCOINSPEND);
 }
 
 bool GetScriptOp(CScriptBase::const_iterator& pc, CScriptBase::const_iterator end, opcodetype& opcodeRet, std::vector<unsigned char>* pvchRet)

@@ -110,7 +110,7 @@ bool static IsValidSignatureEncoding(const std::vector<unsigned char> &sig) {
     //   excluding the sighash byte.
     // * R-length: 1-byte length descriptor of the R value that follows.
     // * R: arbitrary-length big-endian encoded R value. It must use the shortest
-    //   possible encoding for a positive integer (which means no null bytes at
+    //   possible encoding for a positive integers (which means no null bytes at
     //   the start, except a single one when the next byte has its highest bit set).
     // * S-length: 1-byte length descriptor of the S value that follows.
     // * S: arbitrary-length big-endian encoded S value. The same rules apply.
@@ -219,32 +219,30 @@ bool static CheckPubKeyEncoding(const valtype &vchPubKey, unsigned int flags, co
         return set_error(serror, SCRIPT_ERR_PUBKEYTYPE);
     }
     // Only compressed keys are accepted in segwit
-    if ((flags & SCRIPT_VERIFY_WITNESS_PUBKEYTYPE) != 0 && sigversion == SigVersion::WITNESS_V0 && !IsCompressedPubKey(vchPubKey)) {
+    if ((flags & SCRIPT_VERIFY_WITNESS_PUBKEYTYPE) != 0 && sigversion == SIGVERSION_WITNESS_V0 && !IsCompressedPubKey(vchPubKey)) {
         return set_error(serror, SCRIPT_ERR_WITNESS_PUBKEYTYPE);
     }
     return true;
 }
 
 bool static CheckMinimalPush(const valtype& data, opcodetype opcode) {
-    // Excludes OP_1NEGATE, OP_1-16 since they are by definition minimal
-    assert(0 <= opcode && opcode <= OP_PUSHDATA4);
     if (data.size() == 0) {
-        // Should have used OP_0.
+        // Could have used OP_0.
         return opcode == OP_0;
     } else if (data.size() == 1 && data[0] >= 1 && data[0] <= 16) {
-        // Should have used OP_1 .. OP_16.
-        return false;
+        // Could have used OP_1 .. OP_16.
+        return opcode == OP_1 + (data[0] - 1);
     } else if (data.size() == 1 && data[0] == 0x81) {
-        // Should have used OP_1NEGATE.
-        return false;
+        // Could have used OP_1NEGATE.
+        return opcode == OP_1NEGATE;
     } else if (data.size() <= 75) {
-        // Must have used a direct push (opcode indicating number of bytes pushed + those bytes).
+        // Could have used a direct push (opcode indicating number of bytes pushed + those bytes).
         return opcode == data.size();
     } else if (data.size() <= 255) {
-        // Must have used OP_PUSHDATA.
+        // Could have used OP_PUSHDATA.
         return opcode == OP_PUSHDATA1;
     } else if (data.size() <= 65535) {
-        // Must have used OP_PUSHDATA2.
+        // Could have used OP_PUSHDATA2.
         return opcode == OP_PUSHDATA2;
     }
     return true;
@@ -457,8 +455,23 @@ bool EvalScript(std::vector<std::vector<unsigned char> >& stack, const CScript& 
                     break;
                 }
 
+                case OP_ISCOINSTAKE:
+                {
+
+                    opcodetype opbool = checker.IsCoinStake() ? OP_TRUE : OP_FALSE;
+                    CScriptNum bn(opbool);
+                    stack.push_back(bn.getvch());
+                    break;
+                }
+
+                // Ghostnode payment pooling
+                case OP_KEYLOCKVERIFY:
+                {
+                    break;
+                }
+
                 case OP_NOP1: case OP_NOP4: case OP_NOP5:
-                case OP_NOP6: case OP_NOP7: case OP_NOP8: case OP_NOP9: case OP_NOP10:
+                case OP_NOP6: case OP_NOP7: case OP_NOP8: //case OP_NOP10:
                 {
                     if (flags & SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_NOPS)
                         return set_error(serror, SCRIPT_ERR_DISCOURAGE_UPGRADABLE_NOPS);
@@ -475,7 +488,7 @@ bool EvalScript(std::vector<std::vector<unsigned char> >& stack, const CScript& 
                         if (stack.size() < 1)
                             return set_error(serror, SCRIPT_ERR_UNBALANCED_CONDITIONAL);
                         valtype& vch = stacktop(-1);
-                        if (sigversion == SigVersion::WITNESS_V0 && (flags & SCRIPT_VERIFY_MINIMALIF)) {
+                        if (sigversion == SIGVERSION_WITNESS_V0 && (flags & SCRIPT_VERIFY_MINIMALIF)) {
                             if (vch.size() > 1)
                                 return set_error(serror, SCRIPT_ERR_MINIMALIF);
                             if (vch.size() == 1 && vch[0] != 1)
@@ -1235,7 +1248,7 @@ uint256 SignatureHash(const CScript& scriptCode, const T& txTo, unsigned int nIn
 {
     assert(nIn < txTo.vin.size());
 
-    if (sigversion == SigVersion::WITNESS_V0) {
+    if (sigversion == SIGVERSION_WITNESS_V0) {
         uint256 hashPrevouts;
         uint256 hashSequence;
         uint256 hashOutputs;
@@ -1457,7 +1470,7 @@ static bool VerifyWitnessProgram(const CScriptWitness& witness, int witversion, 
             return set_error(serror, SCRIPT_ERR_PUSH_SIZE);
     }
 
-    if (!EvalScript(stack, scriptPubKey, flags, checker, SigVersion::WITNESS_V0, serror)) {
+    if (!EvalScript(stack, scriptPubKey, flags, checker, SIGVERSION_WITNESS_V0, serror)) {
         return false;
     }
 
@@ -1484,12 +1497,12 @@ bool VerifyScript(const CScript& scriptSig, const CScript& scriptPubKey, const C
     }
 
     std::vector<std::vector<unsigned char> > stack, stackCopy;
-    if (!EvalScript(stack, scriptSig, flags, checker, SigVersion::BASE, serror))
+    if (!EvalScript(stack, scriptSig, flags, checker, SIGVERSION_BASE, serror))
         // serror is set
         return false;
     if (flags & SCRIPT_VERIFY_P2SH)
         stackCopy = stack;
-    if (!EvalScript(stack, scriptPubKey, flags, checker, SigVersion::BASE, serror))
+    if (!EvalScript(stack, scriptPubKey, flags, checker, SIGVERSION_BASE, serror))
         // serror is set
         return false;
     if (stack.empty())
@@ -1517,7 +1530,7 @@ bool VerifyScript(const CScript& scriptSig, const CScript& scriptPubKey, const C
     }
 
     // Additional validation for spend-to-script-hash transactions:
-    if ((flags & SCRIPT_VERIFY_P2SH) && scriptPubKey.IsPayToScriptHash())
+    if ((flags & SCRIPT_VERIFY_P2SH) && scriptPubKey.IsPayToScriptHashAny())
     {
         // scriptSig must be literals-only or validation fails
         if (!scriptSig.IsPushOnly())
@@ -1535,7 +1548,7 @@ bool VerifyScript(const CScript& scriptSig, const CScript& scriptPubKey, const C
         CScript pubKey2(pubKeySerialized.begin(), pubKeySerialized.end());
         popstack(stack);
 
-        if (!EvalScript(stack, pubKey2, flags, checker, SigVersion::BASE, serror))
+        if (!EvalScript(stack, pubKey2, flags, checker, SIGVERSION_BASE, serror))
             // serror is set
             return false;
         if (stack.empty())
@@ -1619,7 +1632,7 @@ size_t CountWitnessSigOps(const CScript& scriptSig, const CScript& scriptPubKey,
         return WitnessSigOps(witnessversion, witnessprogram, witness ? *witness : witnessEmpty);
     }
 
-    if (scriptPubKey.IsPayToScriptHash() && scriptSig.IsPushOnly()) {
+    if (scriptPubKey.IsPayToScriptHashAny() && scriptSig.IsPushOnly()) {
         CScript::const_iterator pc = scriptSig.begin();
         std::vector<unsigned char> data;
         while (pc < scriptSig.end()) {
@@ -1633,4 +1646,205 @@ size_t CountWitnessSigOps(const CScript& scriptSig, const CScript& scriptPubKey,
     }
 
     return 0;
+}
+
+bool HasIsCoinstakeOp(const CScript &script)
+{
+    CScript::const_iterator pc = script.begin();
+
+    if (pc == script.end())
+        return false;
+
+    opcodetype opcode;
+    valtype vchPushValue;
+
+    if (!script.GetOp(pc, opcode, vchPushValue))
+        return false;
+
+    if (opcode == OP_ISCOINSTAKE)
+        return true;
+
+    return false;
+}
+
+bool GetCoinstakeScriptPath(const CScript &scriptIn, CScript &scriptOut)
+{
+    CScript::const_iterator pc = scriptIn.begin();
+    CScript::const_iterator pend = scriptIn.end();
+    CScript::const_iterator pcStart = pc;
+
+    opcodetype opcode;
+    valtype vchPushValue;
+
+    bool fFoundOp = false;
+    while (pc < pend)
+    {
+        if (!scriptIn.GetOp(pc, opcode, vchPushValue))
+            break;
+
+        if (!fFoundOp
+            && opcode == OP_ISCOINSTAKE)
+        {
+            pc++; // skip over if
+
+            pcStart = pc;
+            fFoundOp = true;
+            continue;
+        }
+
+        if (fFoundOp && opcode == OP_ELSE)
+        {
+            pc--;
+            scriptOut = CScript(pcStart, pc);
+            return true;
+        }
+    }
+
+    return false;
+}
+
+bool GetNonCoinstakeScriptPath(const CScript &scriptIn, CScript &scriptOut)
+{
+    CScript::const_iterator pc = scriptIn.begin();
+    CScript::const_iterator pend = scriptIn.end();
+    CScript::const_iterator pcStart = pc;
+
+    opcodetype opcode;
+    valtype vchPushValue;
+
+    bool fFoundOp = false;
+    while (pc < pend)
+    {
+        if (!scriptIn.GetOp(pc, opcode, vchPushValue))
+            break;
+
+        if (!fFoundOp
+            && opcode == OP_ELSE)
+        {
+            pcStart = pc;
+            fFoundOp = true;
+            continue;
+        }
+
+        if (fFoundOp && opcode == OP_ENDIF)
+        {
+            pc--;
+            scriptOut = CScript(pcStart, pc);
+            return true;
+        }
+    }
+
+    return false;
+}
+
+bool GetCoinstakeScriptFee(const CScript &scriptIn, int64_t &feeOut)
+{
+    CScript::const_iterator pc = scriptIn.begin();
+    CScript::const_iterator pend = scriptIn.end();
+    CScript::const_iterator pcStart = pc;
+
+    opcodetype opcode;
+    valtype vchPushValue;
+
+    bool fFoundOp = false;
+    while (pc < pend)
+    {
+        if (!scriptIn.GetOp(pc, opcode, vchPushValue))
+            break;
+
+        if (!fFoundOp&& opcode == OP_ENDIF)
+        {
+            pcStart = pc;
+            fFoundOp = true;
+            continue;
+        }
+        if (fFoundOp && opcode == OP_DROP)
+        {
+            if (!scriptIn.GetOp(pcStart, opcode, vchPushValue))
+                return false;
+            feeOut = CScriptNum(vchPushValue, false).getint();
+            if(feeOut > 10000 || feeOut < 0){
+                return false;
+            }
+            return true;
+        }
+    }
+
+    return false;
+}
+
+bool GetCoinstakeScriptFeeRewardAddress(const CScript &scriptIn, CScript &scriptOut)
+{
+    CScript::const_iterator pc = scriptIn.begin();
+    CScript::const_iterator pend = scriptIn.end();
+    CScript::const_iterator pcStart = pc;
+
+    opcodetype opcode;
+    valtype vchPushValue;
+
+    bool fFoundOp = false;
+    while (pc < pend)
+    {
+        if (!scriptIn.GetOp(pc, opcode, vchPushValue))
+            break;
+
+        if (!fFoundOp&& opcode == OP_DROP)
+        {
+            pcStart = pc;
+            fFoundOp = true;
+            continue;
+        }
+        if (fFoundOp && opcode == OP_DROP)
+        {
+            if (!scriptIn.GetOp(pcStart, opcode, vchPushValue))
+                return false;
+            scriptOut << OP_HASH160 << (vchPushValue) << OP_EQUAL;
+            return true;
+        }
+    }
+
+    return false;
+}
+
+bool SplitConditionalCoinstakeScript(const CScript &scriptIn, CScript &scriptOutA, CScript &scriptOutB)
+{
+    CScript::const_iterator pc = scriptIn.begin();
+    CScript::const_iterator pend = scriptIn.end();
+    CScript::const_iterator pcStart = pc;
+
+    opcodetype opcode;
+    valtype vchPushValue;
+
+    bool fFoundOp = false, fFoundElse = false;
+    while (pc < pend)
+    {
+        if (!scriptIn.GetOp(pc, opcode, vchPushValue))
+            break;
+
+        if (!fFoundOp
+            && opcode == OP_ISCOINSTAKE)
+        {
+            pc++; // skip over if
+
+            pcStart = pc;
+            fFoundOp = true;
+            continue;
+        }
+
+        if (fFoundElse && opcode == OP_ENDIF)
+        {
+            pc--;
+            scriptOutB = CScript(pcStart, pc);
+            return true;
+        }
+
+        if (fFoundOp && opcode == OP_ELSE)
+        {
+            scriptOutA = CScript(pcStart, pc-1);
+            pcStart = pc;
+            fFoundElse = true;
+        }
+    }
+
+    return false;
 }

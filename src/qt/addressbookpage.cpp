@@ -3,58 +3,29 @@
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #if defined(HAVE_CONFIG_H)
-#include <config/bitcoin-config.h>
+#include <config/nix-config.h>
 #endif
 
 #include <qt/addressbookpage.h>
 #include <qt/forms/ui_addressbookpage.h>
 
 #include <qt/addresstablemodel.h>
-#include <qt/bitcoingui.h>
+#include <qt/nixgui.h>
 #include <qt/csvmodelwriter.h>
 #include <qt/editaddressdialog.h>
 #include <qt/guiutil.h>
 #include <qt/platformstyle.h>
+#include <util.h>
+#include <base58.h>
+#include <wallet/wallet.h>
+#include <qt/walletmodel.h>
+#include <qt/receiverequestdialog.h>
 
 #include <QIcon>
 #include <QMenu>
 #include <QMessageBox>
 #include <QSortFilterProxyModel>
-
-class AddressBookSortFilterProxyModel final : public QSortFilterProxyModel
-{
-    const QString m_type;
-
-public:
-    AddressBookSortFilterProxyModel(const QString& type, QObject* parent)
-        : QSortFilterProxyModel(parent)
-        , m_type(type)
-    {
-        setDynamicSortFilter(true);
-        setFilterCaseSensitivity(Qt::CaseInsensitive);
-        setSortCaseSensitivity(Qt::CaseInsensitive);
-    }
-
-protected:
-    bool filterAcceptsRow(int row, const QModelIndex& parent) const
-    {
-        auto model = sourceModel();
-        auto label = model->index(row, AddressTableModel::Label, parent);
-
-        if (model->data(label, AddressTableModel::TypeRole).toString() != m_type) {
-            return false;
-        }
-
-        auto address = model->index(row, AddressTableModel::Address, parent);
-
-        if (filterRegExp().indexIn(model->data(address).toString()) < 0 &&
-            filterRegExp().indexIn(model->data(label).toString()) < 0) {
-            return false;
-        }
-
-        return true;
-    }
-};
+#include <QDebug>
 
 AddressBookPage::AddressBookPage(const PlatformStyle *platformStyle, Mode _mode, Tabs _tab, QWidget *parent) :
     QDialog(parent),
@@ -102,14 +73,12 @@ AddressBookPage::AddressBookPage(const PlatformStyle *platformStyle, Mode _mode,
     switch(tab)
     {
     case SendingTab:
-        ui->labelExplanation->setText(tr("These are your Bitcoin addresses for sending payments. Always check the amount and the receiving address before sending coins."));
+        ui->labelExplanation->setText(tr("These are your NIX addresses for sending payments. Always check the amount and the receiving address before sending coins."));
         ui->deleteAddress->setVisible(true);
-        ui->newAddress->setVisible(true);
         break;
     case ReceivingTab:
-        ui->labelExplanation->setText(tr("These are your Bitcoin addresses for receiving payments. It is recommended to use a new receiving address for each transaction."));
+        ui->labelExplanation->setText(tr("These are your NIX addresses for receiving payments. It is recommended to use a new receiving address for each transaction."));
         ui->deleteAddress->setVisible(false);
-        ui->newAddress->setVisible(false);
         break;
     }
 
@@ -117,6 +86,7 @@ AddressBookPage::AddressBookPage(const PlatformStyle *platformStyle, Mode _mode,
     QAction *copyAddressAction = new QAction(tr("&Copy Address"), this);
     QAction *copyLabelAction = new QAction(tr("Copy &Label"), this);
     QAction *editAction = new QAction(tr("&Edit"), this);
+    QAction *getPaperWalletAction = new QAction(tr("&Get Paper Wallet"), this);
     deleteAction = new QAction(ui->deleteAddress->text(), this);
 
     // Build context menu
@@ -126,6 +96,8 @@ AddressBookPage::AddressBookPage(const PlatformStyle *platformStyle, Mode _mode,
     contextMenu->addAction(editAction);
     if(tab == SendingTab)
         contextMenu->addAction(deleteAction);
+    if(tab == ReceivingTab)
+        contextMenu->addAction(getPaperWalletAction);
     contextMenu->addSeparator();
 
     // Connect signals for context menu actions
@@ -150,8 +122,7 @@ void AddressBookPage::setModel(AddressTableModel *_model)
     if(!_model)
         return;
 
-    auto type = tab == ReceivingTab ? AddressTableModel::Receive : AddressTableModel::Send;
-    proxyModel = new AddressBookSortFilterProxyModel(type, this);
+    proxyModel = new QSortFilterProxyModel(this);
     proxyModel->setSourceModel(_model);
 
     connect(ui->searchLineEdit, &QLineEdit::textChanged, proxyModel, &QSortFilterProxyModel::setFilterWildcard);
@@ -171,6 +142,12 @@ void AddressBookPage::setModel(AddressTableModel *_model)
 
     selectionChanged();
 }
+
+void AddressBookPage::setWalletModel(WalletModel *_model)
+{
+    this->walletModel = _model;
+}
+
 
 void AddressBookPage::on_copyAddress_clicked()
 {
@@ -208,11 +185,10 @@ void AddressBookPage::on_newAddress_clicked()
     if(!model)
         return;
 
-    if (tab == ReceivingTab) {
-        return;
-    }
-
-    EditAddressDialog dlg(EditAddressDialog::NewSendingAddress, this);
+    EditAddressDialog dlg(
+        tab == SendingTab ?
+        EditAddressDialog::NewSendingAddress :
+        EditAddressDialog::NewReceivingAddress, this);
     dlg.setModel(model);
     if(dlg.exec())
     {
@@ -264,6 +240,30 @@ void AddressBookPage::selectionChanged()
         ui->deleteAddress->setEnabled(false);
         ui->copyAddress->setEnabled(false);
     }
+
+    //remove standard keys from wallet
+    int row = table->model()->rowCount();
+    for (int i = 0; i < row ; ++i)
+    {
+        QVariant content = table->model()->data(table->model()->index(i, 0), Qt::DisplayRole);
+        //LogPrintf("\nTBE: %s \n",content.toString().toStdString());
+        if(content == QVariant("Default Address"))
+        {
+            QVariant address = table->model()->data(table->model()->index(i, 1), Qt::DisplayRole);
+            CTxDestination addr = CBitcoinAddress(address.toString().toStdString()).Get();
+            vpwallets.front()->DelAddressBook(addr);
+            //table->model()->removeRow(i);
+        }
+        if(content == QVariant("Default Stealth Address"))
+        {
+            QVariant address = table->model()->data(table->model()->index(i, 1), Qt::DisplayRole);
+            CTxDestination addr = CBitcoinAddress(address.toString().toStdString()).Get();
+            vpwallets.front()->DelAddressBook(addr);
+            //table->model()->removeRow(i);
+        }
+    }
+
+
 }
 
 void AddressBookPage::done(int retval)
@@ -331,4 +331,81 @@ void AddressBookPage::selectNewAddress(const QModelIndex &parent, int begin, int
         ui->tableView->selectRow(idx.row());
         newAddressToSelect.clear();
     }
+}
+
+void AddressBookPage::getPaperWallet(){
+
+    if(!model)
+        return;
+
+    if(!ui->tableView->selectionModel())
+        return;
+
+    QModelIndexList selection = ui->tableView->selectionModel()->selectedRows();
+
+    if(selection.isEmpty())
+        return;
+
+    for (const QModelIndex& index : selection) {
+        ReceiveRequestDialog *dialog = new ReceiveRequestDialog(this);
+        dialog->setModel(walletModel->getOptionsModel());
+        SendCoinsRecipient printKey;
+
+        /************************************/
+        CWallet * const pwallet = walletModel->getWallet();
+        if (!EnsureWalletIsAvailable(pwallet, false)) {
+            return;
+        }
+
+
+        LOCK2(cs_main, pwallet->cs_wallet);
+
+
+        WalletModel::UnlockContext ctx(walletModel->requestUnlock());
+        if(!ctx.isValid())
+        {
+            // Unlock wallet was cancelled
+            return;
+        }
+
+
+        if(!ui->tableView || !ui->tableView->selectionModel())
+            return;
+        QModelIndexList submodel = ui->tableView->selectionModel()->selectedRows(AddressTableModel::Address);
+
+        if(submodel.isEmpty())
+        {
+            return;
+        }
+
+        std::string strAddress = submodel.at(0).data(Qt::EditRole).toString().toStdString();
+        CTxDestination dest = DecodeDestination(strAddress);
+        if (!IsValidDestination(dest)) {
+            return;
+        }
+        auto keyid = GetKeyForDestination(*pwallet, dest);
+        if (keyid.IsNull()) {
+            return;
+        }
+        CKey vchSecret;
+        if (!pwallet->GetKey(keyid, vchSecret)) {
+            return;
+        }
+
+        printKey.address = QString::fromStdString(CBitcoinSecret(vchSecret).ToString());
+        /************************************/
+
+        QModelIndexList submodelLabel = ui->tableView->selectionModel()->selectedRows(AddressTableModel::Label);
+
+        if(submodelLabel.isEmpty())
+        {
+            return;
+        }
+
+        printKey.label = submodelLabel.at(0).data(Qt::EditRole).toString();
+        dialog->setInfo(printKey);
+        dialog->setAttribute(Qt::WA_DeleteOnClose);
+        dialog->show();
+    }
+
 }

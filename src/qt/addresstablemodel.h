@@ -8,7 +8,7 @@
 #include <QAbstractTableModel>
 #include <QStringList>
 
-enum class OutputType;
+enum OutputType : int;
 
 class AddressTablePriv;
 class WalletModel;
@@ -28,9 +28,14 @@ public:
     explicit AddressTableModel(WalletModel *parent = nullptr);
     ~AddressTableModel();
 
+    enum AddressType {
+         Other = 0,
+         Stealth = 1
+     };
     enum ColumnIndex {
         Label = 0,   /**< User specified label */
-        Address = 1  /**< Bitcoin address */
+        Address = 1,  /**< Bitcoin address */
+        Stealth_Address=2
     };
 
     enum RoleIndex {
@@ -49,6 +54,8 @@ public:
 
     static const QString Send;      /**< Specifies send address */
     static const QString Receive;   /**< Specifies receive address */
+    static const QString GhostVault;   /**< Specifies ghost address */
+
 
     /** @name Methods overridden from QAbstractTableModel
         @{*/
@@ -65,7 +72,7 @@ public:
     /* Add an address to the model.
        Returns the added address on success, and an empty string otherwise.
      */
-    QString addRow(const QString &type, const QString &label, const QString &address, const OutputType address_type);
+    QString addRow(const QString &type, const QString &label, const QString &address, const OutputType address_type, int addressType = 0);
 
     /** Look up label for address in address book, if not found return empty string. */
     QString labelForAddress(const QString &address) const;
@@ -79,8 +86,8 @@ public:
     int lookupAddress(const QString &address) const;
 
     EditStatus getEditStatus() const { return editStatus; }
-
-    OutputType GetDefaultAddressType() const;
+    bool ghostNIX(std::string &stringError, std::string denomAmount);
+    bool convertGhost(std::string &stringError, std::string thirdPartyAddress, std::string denomAmount);
 
 private:
     WalletModel* const walletModel;
@@ -93,11 +100,13 @@ private:
 
     /** Notify listeners that data changed. */
     void emitDataChanged(int index);
+    void warningBox(QString msg);
 
 public Q_SLOTS:
     /* Update address list from core.
      */
     void updateEntry(const QString &address, const QString &label, bool isMine, const QString &purpose, int status);
+    void updateEntry(const QString &pubCoin, const QString &isUsed, int status);
 
     friend class AddressTablePriv;
 };

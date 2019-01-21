@@ -10,18 +10,22 @@
 #include <interfaces/node.h>
 #include <key_io.h>
 #include <wallet/wallet.h>
+#include <boost/foreach.hpp>
+
 
 #include <QFont>
 #include <QDebug>
 
 const QString AddressTableModel::Send = "S";
 const QString AddressTableModel::Receive = "R";
+const QString AddressTableModel::GhostVault = "G";
 
 struct AddressTableEntry
 {
     enum Type {
         Sending,
         Receiving,
+        GhostVault,
         Hidden /* QSortFilterProxyModel will filter these out */
     };
 
@@ -86,6 +90,22 @@ public:
                                   QString::fromStdString(address.name),
                                   QString::fromStdString(EncodeDestination(address.dest))));
             }
+
+            std::list<CZerocoinEntry> listPubcoin;
+            CWalletDB(wallet->GetDBHandle()).ListPubCoin(listPubcoin);
+            BOOST_FOREACH(const CZerocoinEntry& item, listPubcoin)
+            {
+                if(item.randomness != 0 && item.serialNumber != 0){
+                    const std::string& pubCoin = item.value.GetHex();
+                    // const std::string& isUsed = item.IsUsed ? "Used" : "New";
+                    const std::string& isUsedDenomStr = item.IsUsed
+                            ? "Used (" + std::to_string(item.denomination) + " mint)"
+                            : "New (" + std::to_string(item.denomination) + " mint)";
+                    cachedAddressTable.append(AddressTableEntry(AddressTableEntry::GhostVault,
+                                                                QString::fromStdString(isUsedDenomStr),
+                                                                QString::fromStdString(pubCoin)));
+                }
+            }
         }
         // qLowerBound() and qUpperBound() require our cachedAddressTable list to be sorted in asc order
         // Even though the map is already sorted this re-sorting step is needed because the originating map
@@ -138,6 +158,42 @@ public:
             parent->endRemoveRows();
             break;
         }
+    }
+
+    void updateEntry(const QString &pubCoin, const QString &isUsed, int status)
+    {
+        // Find address / label in model
+        QList<AddressTableEntry>::iterator lower = qLowerBound(
+                cachedAddressTable.begin(), cachedAddressTable.end(), pubCoin, AddressTableEntryLessThan());
+        QList<AddressTableEntry>::iterator upper = qUpperBound(
+                cachedAddressTable.begin(), cachedAddressTable.end(), pubCoin, AddressTableEntryLessThan());
+        int lowerIndex = (lower - cachedAddressTable.begin());
+        bool inModel = (lower != upper);
+        AddressTableEntry::Type newEntryType = AddressTableEntry::GhostVault;
+
+        switch(status)
+        {
+            case CT_NEW:
+                if(inModel)
+                {
+                    qWarning() << "Warning: AddressTablePriv::updateEntry: Got CT_NOW, but entry is already in model";
+                }
+                parent->beginInsertRows(QModelIndex(), lowerIndex, lowerIndex);
+                cachedAddressTable.insert(lowerIndex, AddressTableEntry(newEntryType, isUsed, pubCoin));
+                parent->endInsertRows();
+                break;
+            case CT_UPDATED:
+                if(!inModel)
+                {
+                    qWarning() << "Warning: AddressTablePriv::updateEntry: Got CT_UPDATED, but entry is not in model";
+                    break;
+                }
+                lower->type = newEntryType;
+                lower->label = isUsed;
+                parent->emitDataChanged(lowerIndex);
+                break;
+        }
+
     }
 
     int size()
@@ -224,6 +280,8 @@ QVariant AddressTableModel::data(const QModelIndex &index, int role) const
             return Send;
         case AddressTableEntry::Receiving:
             return Receive;
+        case AddressTableEntry::GhostVault:
+            return GhostVault;
         default: break;
         }
     }
@@ -336,7 +394,13 @@ void AddressTableModel::updateEntry(const QString &address,
     priv->updateEntry(address, label, isMine, purpose, status);
 }
 
-QString AddressTableModel::addRow(const QString &type, const QString &label, const QString &address, const OutputType address_type)
+void AddressTableModel::updateEntry(const QString &pubCoin, const QString &isUsed, int status)
+{
+    // Update stealth address book model from Bitcoin core
+    priv->updateEntry(pubCoin, isUsed, status);
+}
+
+QString AddressTableModel::addRow(const QString &type, const QString &label, const QString &address, const OutputType address_type, int addressType)
 {
     std::string strLabel = label.toStdString();
     std::string strAddress = address.toStdString();
@@ -451,4 +515,39 @@ OutputType AddressTableModel::GetDefaultAddressType() const { return walletModel
 void AddressTableModel::emitDataChanged(int idx)
 {
     Q_EMIT dataChanged(index(idx, 0, QModelIndex()), index(idx, columns.length()-1, QModelIndex()));
+}
+
+void AddressTableModel::warningBox(QString msg)
+{
+    qWarning() << msg;
+    QPair<QString, CClientUIInterface::MessageBoxFlags> msgParams;
+    msgParams.second = CClientUIInterface::MSG_WARNING;
+    msgParams.first = msg;
+
+    Q_EMIT walletModel->message(tr("Address Table"), msgParams.first, msgParams.second);
+}
+
+
+bool AddressTableModel::ghostNIX(string &stringError, string denomAmount)
+{
+    WalletModel::UnlockContext ctx(walletModel->requestUnlock());
+    if(!ctx.isValid())
+    {
+        // Unlock wallet failed or was cancelled
+        return false;
+    }
+
+    return (wallet)->CreateZerocoinMintModel(stringError, denomAmount);
+}
+
+bool AddressTableModel::convertGhost(string &stringError, string thirdPartyAddress, string denomAmount)
+{
+    WalletModel::UnlockContext ctx(walletModel->requestUnlock());
+    if(!ctx.isValid())
+    {
+        // Unlock wallet failed or was cancelled
+        return false;
+    }
+
+    return (wallet)->CreateZerocoinSpendModel(stringError, denomAmount, thirdPartyAddress);
 }

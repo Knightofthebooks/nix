@@ -24,6 +24,7 @@ class WalletModelTransaction
 {
 public:
     explicit WalletModelTransaction(const QList<SendCoinsRecipient> &recipients);
+    ~WalletModelTransaction();
 
     QList<SendCoinsRecipient> getRecipients() const;
 
@@ -36,6 +37,8 @@ public:
     CAmount getTotalTransactionAmount() const;
 
     void reassignAmounts(int nChangePosRet); // needed for the subtract-fee-from-amount feature
+
+    CWalletTx *walletTransaction;
 
 private:
     QList<SendCoinsRecipient> recipients;

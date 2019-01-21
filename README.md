@@ -1,77 +1,48 @@
-Bitcoin Core integration/staging tree
-=====================================
+<hr />
+<div align="center">
+    <img src="images/nix_full.png" alt="Logo" width='300px' height='auto'/>
+</div>
+<hr />
 
-[![Build Status](https://travis-ci.org/bitcoin/bitcoin.svg?branch=master)](https://travis-ci.org/bitcoin/bitcoin)
+[![Build Status](https://travis-ci.org/NixPlatform/nix.svg?branch=master)](https://travis-ci.org/NixPlatform/NixCore)
 
-https://bitcoincore.org
+### What is NIX?
+---
 
-What is Bitcoin?
-----------------
+NIX is a digital currency that combines Atomic Swaps/Smart Contracts and privacy using our unique, innovative Ghost Protocol to provide the world with a truly anonymous and decentralized transfer of assets for the cross-chain era
 
-Bitcoin is an experimental digital currency that enables instant payments to
-anyone, anywhere in the world. Bitcoin uses peer-to-peer technology to operate
-with no central authority: managing transactions and issuing money are carried
-out collectively by the network. Bitcoin Core is the name of open source
-software which enables the use of this currency.
+### Key Features
+---
 
-For more information, as well as an immediately useable, binary version of
-the Bitcoin Core software, see https://bitcoincore.org/en/download/, or read the
-[original whitepaper](https://bitcoincore.org/bitcoin.pdf).
+* NIX utilizes a custom built privacy library that integrates Zerocoin/Stealthoutputs/Bulletproofs and TOR support. This allows transaction privacy in its fullest and most trustless form.
+
+* NIX aims to create a privatized DEX platform built on top of already developed DEX volumes to conduct privatized atomic swaps through use of NIX’s privacy library.
+
+* Ghost Protocol and Ghost Vault to enhance privacy features.
+
+For more information, please visit [NixPlatform.io](https://nixplatform.io/nixplatform.io) or read the [whitepaper](https://nixplatform.io/docs/NIX-Platform-Whitepaper.pdf).
+
+
+### Guides & Documentation
+
+* [White Paper](https://nixplatform.io/docs/NIX-Platform-Whitepaper.pdf)
+* [NIX Ghost Nodes](https://nixplatform.zendesk.com/hc/en-us/articles/360005044571-Setting-up-your-Ghost-Node)
+
+
+### Links & Resources
+---
+
+* [NIX Website](https://nixplatform.io)
+* [Discord Chat](https://chat.nixplatform.io/)
+* [Reddit](https://reddit.com/r/nixplatform)
+* [Medium](https://medium.com/@nixplatform)
+* [Twitter](https://twitter.com/nixplatform)
+* [GitHub wiki](https://github.com/nixplatform/nixcore/wiki)
 
 License
--------
+---
 
-Bitcoin Core is released under the terms of the MIT license. See [COPYING](COPYING) for more
+NIX Core is released under the terms of the MIT license. See [COPYING](COPYING) for more
 information or see https://opensource.org/licenses/MIT.
 
-Development Process
--------------------
-
-The `master` branch is regularly built and tested, but is not guaranteed to be
-completely stable. [Tags](https://github.com/bitcoin/bitcoin/tags) are created
-regularly to indicate new official, stable release versions of Bitcoin Core.
-
-The contribution workflow is described in [CONTRIBUTING.md](CONTRIBUTING.md)
-and useful hints for developers can be found in [doc/developer-notes.md](doc/developer-notes.md).
-
-Testing
--------
-
-Testing and code review is the bottleneck for development; we get more pull
-requests than we can review and test on short notice. Please be patient and help out by testing
-other people's pull requests, and remember this is a security-critical project where any mistake might cost people
-lots of money.
-
-### Automated Testing
-
-Developers are strongly encouraged to write [unit tests](src/test/README.md) for new code, and to
-submit new unit tests for old code. Unit tests can be compiled and run
-(assuming they weren't disabled in configure) with: `make check`. Further details on running
-and extending unit tests can be found in [/src/test/README.md](/src/test/README.md).
-
-There are also [regression and integration tests](/test), written
-in Python, that are run automatically on the build server.
-These tests can be run (if the [test dependencies](/test) are installed) with: `test/functional/test_runner.py`
-
-The Travis CI system makes sure that every pull request is built for Windows, Linux, and macOS, and that unit/sanity tests are run automatically.
-
-### Manual Quality Assurance (QA) Testing
-
-Changes should be tested by somebody other than the developer who wrote the
-code. This is especially important for large or high-risk changes. It is useful
-to add a test plan to the pull request description if testing the changes is
-not straightforward.
-
-Translations
-------------
-
-Changes to translations as well as new translations can be submitted to
-[Bitcoin Core's Transifex page](https://www.transifex.com/projects/p/bitcoin/).
-
-Translations are periodically pulled from Transifex and merged into the git repository. See the
-[translation process](doc/translation_process.md) for details on how this works.
-
-**Important**: We do not accept translation changes as GitHub pull requests because the next
-pull from Transifex would automatically overwrite them again.
-
-Translators should also subscribe to the [mailing list](https://groups.google.com/forum/#!forum/bitcoin-translators).
+Copyright (c) 2017-2018 The NIX Core Developers Copyright (c) 2013-2015 The Bitcoin Core Developers

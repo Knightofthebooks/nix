@@ -8,7 +8,6 @@
 #include <primitives/transaction.h>
 #include <script/interpreter.h>
 #include <consensus/validation.h>
-
 // TODO remove the following dependencies
 #include <chain.h>
 #include <coins.h>
@@ -120,7 +119,7 @@ unsigned int GetLegacySigOpCount(const CTransaction& tx)
 
 unsigned int GetP2SHSigOpCount(const CTransaction& tx, const CCoinsViewCache& inputs)
 {
-    if (tx.IsCoinBase())
+    if (tx.IsCoinBase() || tx.IsZerocoinSpend())
         return 0;
 
     unsigned int nSigOps = 0;
@@ -139,7 +138,7 @@ int64_t GetTransactionSigOpCost(const CTransaction& tx, const CCoinsViewCache& i
 {
     int64_t nSigOps = GetLegacySigOpCount(tx) * WITNESS_SCALE_FACTOR;
 
-    if (tx.IsCoinBase())
+    if (tx.IsCoinBase() || tx.IsZerocoinSpend())
         return nSigOps;
 
     if (flags & SCRIPT_VERIFY_P2SH) {
@@ -156,7 +155,7 @@ int64_t GetTransactionSigOpCost(const CTransaction& tx, const CCoinsViewCache& i
     return nSigOps;
 }
 
-bool CheckTransaction(const CTransaction& tx, CValidationState &state, bool fCheckDuplicateInputs)
+bool CheckTransaction(const CTransaction& tx, CValidationState& state, uint256 hashTx, bool isVerifyDB, bool fCheckDuplicateInputs, int nHeight, bool isCheckWallet, CZerocoinTxInfo *zerocoinTxInfo)
 {
     // Basic checks that don't depend on any context
     if (tx.vin.empty())
@@ -181,7 +180,7 @@ bool CheckTransaction(const CTransaction& tx, CValidationState &state, bool fChe
     }
 
     // Check for duplicate inputs - note that this check is slow so we skip it in CheckBlock
-    if (fCheckDuplicateInputs) {
+    if (fCheckDuplicateInputs && !tx.IsZerocoinSpend()) {
         std::set<COutPoint> vInOutPoints;
         for (const auto& txin : tx.vin)
         {
@@ -192,14 +191,19 @@ bool CheckTransaction(const CTransaction& tx, CValidationState &state, bool fChe
 
     if (tx.IsCoinBase())
     {
+        bool fTestNet = (Params().NetworkIDString() == CBaseChainParams::TESTNET);
         if (tx.vin[0].scriptSig.size() < 2 || tx.vin[0].scriptSig.size() > 100)
             return state.DoS(100, false, REJECT_INVALID, "bad-cb-length");
+        if (!CheckDevFundInputs(tx, state, nHeight, fTestNet))
+            return false;
     }
     else
     {
         for (const auto& txin : tx.vin)
-            if (txin.prevout.IsNull())
+            if (txin.prevout.IsNull() && !txin.scriptSig.IsZerocoinSpend())
                 return state.DoS(10, false, REJECT_INVALID, "bad-txns-prevout-null");
+        if (!tx.IsCoinStake() && !CheckZerocoinTransaction(tx, state, hashTx, isVerifyDB, nHeight, isCheckWallet, zerocoinTxInfo))
+                    return false;
     }
 
     return true;
@@ -220,7 +224,13 @@ bool Consensus::CheckTxInputs(const CTransaction& tx, CValidationState& state, c
         assert(!coin.IsSpent());
 
         // If prev is coinbase, check that it's matured
-        if (coin.IsCoinBase() && nSpendHeight - coin.nHeight < COINBASE_MATURITY) {
+        int coinbaseMaturity = nSpendHeight >= Params().nCoinMaturityReductionHeight ? COINBASE_MATURITY_V2 : COINBASE_MATURITY;
+
+        bool fTestNet = (pParams()->NetworkIDString() == CBaseChainParams::TESTNET);
+        if(fTestNet)
+            coinbaseMaturity = COINBASE_MATURITY_TESTNET;
+
+        if (coin.IsCoinBase() && nSpendHeight - coin.nHeight < coinbaseMaturity) {
             return state.Invalid(false,
                 REJECT_INVALID, "bad-txns-premature-spend-of-coinbase",
                 strprintf("tried to spend coinbase at depth %d", nSpendHeight - coin.nHeight));
@@ -233,18 +243,36 @@ bool Consensus::CheckTxInputs(const CTransaction& tx, CValidationState& state, c
         }
     }
 
-    const CAmount value_out = tx.GetValueOut();
-    if (nValueIn < value_out) {
-        return state.DoS(100, false, REJECT_INVALID, "bad-txns-in-belowout", false,
-            strprintf("value in (%s) < value out (%s)", FormatMoney(nValueIn), FormatMoney(value_out)));
+    //We need to account for noninput i.e. coinbase creation for devfund and ghostnodes
+    const CAmount value_out= tx.GetValueOut();
+
+    if(tx.IsCoinStake()){
+        // Return stake reward in nTxFee
+        txfee = value_out - nValueIn;
+
+        // Tally transaction fees
+        const CAmount txfee_aux =  txfee;
+        if (!MoneyRange(txfee_aux)) {
+            return state.DoS(100, false, REJECT_INVALID, "bad-txns-fee-outofrange");
+        }
+
+        return true;
+    }
+    else
+    {
+        if (nValueIn < value_out) {
+            return state.DoS(100, false, REJECT_INVALID, "bad-txns-in-belowout", false,
+                strprintf("value in (%s) < value out (%s)", FormatMoney(nValueIn), FormatMoney(value_out)));
+        }
+
+        // Tally transaction fees
+        const CAmount txfee_aux = nValueIn - value_out;
+        if (!MoneyRange(txfee_aux)) {
+            return state.DoS(100, false, REJECT_INVALID, "bad-txns-fee-outofrange");
+        }
+
+        txfee = txfee_aux;
     }
 
-    // Tally transaction fees
-    const CAmount txfee_aux = nValueIn - value_out;
-    if (!MoneyRange(txfee_aux)) {
-        return state.DoS(100, false, REJECT_INVALID, "bad-txns-fee-outofrange");
-    }
-
-    txfee = txfee_aux;
     return true;
 }

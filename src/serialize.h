@@ -20,7 +20,8 @@
 #include <string.h>
 #include <utility>
 #include <vector>
-
+#include <boost/type_traits/is_fundamental.hpp>
+#include <boost/tuple/tuple.hpp>
 #include <prevector.h>
 #include <span.h>
 
@@ -60,12 +61,6 @@ inline T* NCONST_PTR(const T* val)
     return const_cast<T*>(val);
 }
 
-//! Safely convert odd char pointer types to standard ones.
-inline char* CharCast(char* c) { return c; }
-inline char* CharCast(unsigned char* c) { return (char*)c; }
-inline const char* CharCast(const char* c) { return c; }
-inline const char* CharCast(const unsigned char* c) { return (const char*)c; }
-
 /*
  * Lowest-level serialization and conversion.
  * @note Sizes of these types are verified in the tests
@@ -87,6 +82,11 @@ template<typename Stream> inline void ser_writedata16be(Stream &s, uint16_t obj)
 template<typename Stream> inline void ser_writedata32(Stream &s, uint32_t obj)
 {
     obj = htole32(obj);
+    s.write((char*)&obj, 4);
+}
+template<typename Stream> inline void ser_writedata32be(Stream &s, uint32_t obj)
+{
+    obj = htobe32(obj);
     s.write((char*)&obj, 4);
 }
 template<typename Stream> inline void ser_writedata64(Stream &s, uint64_t obj)
@@ -330,31 +330,9 @@ uint64_t ReadCompactSize(Stream& is)
  * 2^32:           [0x8E 0xFE 0xFE 0xFF 0x00]
  */
 
-/**
- * Mode for encoding VarInts.
- *
- * Currently there is no support for signed encodings. The default mode will not
- * compile with signed values, and the legacy "nonnegative signed" mode will
- * accept signed values, but improperly encode and decode them if they are
- * negative. In the future, the DEFAULT mode could be extended to support
- * negative numbers in a backwards compatible way, and additional modes could be
- * added to support different varint formats (e.g. zigzag encoding).
- */
-enum class VarIntMode { DEFAULT, NONNEGATIVE_SIGNED };
-
-template <VarIntMode Mode, typename I>
-struct CheckVarIntMode {
-    constexpr CheckVarIntMode()
-    {
-        static_assert(Mode != VarIntMode::DEFAULT || std::is_unsigned<I>::value, "Unsigned type required with mode DEFAULT.");
-        static_assert(Mode != VarIntMode::NONNEGATIVE_SIGNED || std::is_signed<I>::value, "Signed type required with mode NONNEGATIVE_SIGNED.");
-    }
-};
-
-template<VarIntMode Mode, typename I>
+template<typename I>
 inline unsigned int GetSizeOfVarInt(I n)
 {
-    CheckVarIntMode<Mode, I>();
     int nRet = 0;
     while(true) {
         nRet++;
@@ -368,10 +346,9 @@ inline unsigned int GetSizeOfVarInt(I n)
 template<typename I>
 inline void WriteVarInt(CSizeComputer& os, I n);
 
-template<typename Stream, VarIntMode Mode, typename I>
+template<typename Stream, typename I>
 void WriteVarInt(Stream& os, I n)
 {
-    CheckVarIntMode<Mode, I>();
     unsigned char tmp[(sizeof(n)*8+6)/7];
     int len=0;
     while(true) {
@@ -386,10 +363,9 @@ void WriteVarInt(Stream& os, I n)
     } while(len--);
 }
 
-template<typename Stream, VarIntMode Mode, typename I>
+template<typename Stream, typename I>
 I ReadVarInt(Stream& is)
 {
-    CheckVarIntMode<Mode, I>();
     I n = 0;
     while(true) {
         unsigned char chData = ser_readdata8(is);
@@ -512,8 +488,8 @@ public:
     }
 };
 
-template<VarIntMode Mode=VarIntMode::DEFAULT, typename I>
-CVarInt<Mode, I> WrapVarInt(I& n) { return CVarInt<Mode, I>{n}; }
+template<typename I>
+CVarInt<I> WrapVarInt(I& n) { return CVarInt<I>(n); }
 
 template<typename I>
 BigEndian<I> WrapBigEndian(I& n) { return BigEndian<I>(n); }
@@ -557,6 +533,20 @@ template<typename Stream, typename K, typename T> void Serialize(Stream& os, con
 template<typename Stream, typename K, typename T> void Unserialize(Stream& is, std::pair<K, T>& item);
 
 /**
+ * 3 tuple
+ */
+template<typename T0, typename T1, typename T2> unsigned int GetSerializeSize(const boost::tuple<T0, T1, T2>& item);
+template<typename Stream, typename T0, typename T1, typename T2> void Serialize(Stream& os, const boost::tuple<T0, T1, T2>& item);
+template<typename Stream, typename T0, typename T1, typename T2> void Unserialize(Stream& is, boost::tuple<T0, T1, T2>& item);
+
+/**
+ * 4 tuple
+ */
+template<typename T0, typename T1, typename T2, typename T3> unsigned int GetSerializeSize(const boost::tuple<T0, T1, T2, T3>& item);
+template<typename Stream, typename T0, typename T1, typename T2, typename T3> void Serialize(Stream& os, const boost::tuple<T0, T1, T2, T3>& item);
+template<typename Stream, typename T0, typename T1, typename T2, typename T3> void Unserialize(Stream& is, boost::tuple<T0, T1, T2, T3>& item);
+
+/**
  * map
  */
 template<typename Stream, typename K, typename T, typename Pred, typename A> void Serialize(Stream& os, const std::map<K, T, Pred, A>& m);
@@ -585,6 +575,7 @@ template<typename Stream, typename T> void Unserialize(Stream& os, std::unique_p
 /**
  * If none of the specialized versions above matched, default to calling member function.
  */
+
 template<typename Stream, typename T>
 inline void Serialize(Stream& os, const T& a)
 {
@@ -592,14 +583,10 @@ inline void Serialize(Stream& os, const T& a)
 }
 
 template<typename Stream, typename T>
-inline void Unserialize(Stream& is, T&& a)
+inline void Unserialize(Stream& is, T& a)
 {
     a.Unserialize(is);
 }
-
-
-
-
 
 /**
  * string
@@ -776,7 +763,94 @@ void Unserialize(Stream& is, std::pair<K, T>& item)
     Unserialize(is, item.second);
 }
 
+template<typename T0, typename T1, typename T2>
+unsigned int GetSerializeSize(const std::tuple<T0, T1, T2>& item)
+{
+    unsigned int nSize = 0;
+    nSize += GetSerializeSize(std::get<0>(item));
+    nSize += GetSerializeSize(std::get<1>(item));
+    nSize += GetSerializeSize(std::get<2>(item));
+    return nSize;
+}
 
+template<typename Stream, typename T0, typename T1, typename T2>
+void Serialize(Stream& os, const std::tuple<T0, T1, T2>& item)
+{
+    Serialize(os, std::get<0>(item));
+    Serialize(os, std::get<1>(item));
+    Serialize(os, std::get<2>(item));
+}
+
+template<typename Stream, typename T0, typename T1, typename T2>
+void Unserialize(Stream& is, std::tuple<T0, T1, T2>& item)
+{
+    Unserialize(is, std::get<0>(item));
+    Unserialize(is, std::get<1>(item));
+    Unserialize(is, std::get<2>(item));
+}
+
+
+/**
+ * 3 tuple
+ */
+template<typename T0, typename T1, typename T2>
+unsigned int GetSerializeSize(const boost::tuple<T0, T1, T2>& item)
+{
+    unsigned int nSize = 0;
+    nSize += GetSerializeSize(boost::get<0>(item));
+    nSize += GetSerializeSize(boost::get<1>(item));
+    nSize += GetSerializeSize(boost::get<2>(item));
+    return nSize;
+}
+
+template<typename Stream, typename T0, typename T1, typename T2>
+void Serialize(Stream& os, const boost::tuple<T0, T1, T2>& item)
+{
+    Serialize(os, boost::get<0>(item));
+    Serialize(os, boost::get<1>(item));
+    Serialize(os, boost::get<2>(item));
+}
+
+template<typename Stream, typename T0, typename T1, typename T2>
+void Unserialize(Stream& is, boost::tuple<T0, T1, T2>& item)
+{
+    Unserialize(is, boost::get<0>(item));
+    Unserialize(is, boost::get<1>(item));
+    Unserialize(is, boost::get<2>(item));
+}
+
+
+/**
+ * 4 tuple
+ */
+template<typename T0, typename T1, typename T2, typename T3>
+unsigned int GetSerializeSize(const boost::tuple<T0, T1, T2, T3>& item, int nType, int nVersion)
+{
+    unsigned int nSize = 0;
+    nSize += GetSerializeSize(boost::get<0>(item), nType, nVersion);
+    nSize += GetSerializeSize(boost::get<1>(item), nType, nVersion);
+    nSize += GetSerializeSize(boost::get<2>(item), nType, nVersion);
+    nSize += GetSerializeSize(boost::get<3>(item), nType, nVersion);
+    return nSize;
+}
+
+template<typename Stream, typename T0, typename T1, typename T2, typename T3>
+void Serialize(Stream& os, const boost::tuple<T0, T1, T2, T3>& item, int nType, int nVersion)
+{
+    Serialize(os, boost::get<0>(item), nType, nVersion);
+    Serialize(os, boost::get<1>(item), nType, nVersion);
+    Serialize(os, boost::get<2>(item), nType, nVersion);
+    Serialize(os, boost::get<3>(item), nType, nVersion);
+}
+
+template<typename Stream, typename T0, typename T1, typename T2, typename T3>
+void Unserialize(Stream& is, boost::tuple<T0, T1, T2, T3>& item, int nType, int nVersion)
+{
+    Unserialize(is, boost::get<0>(item), nType, nVersion);
+    Unserialize(is, boost::get<1>(item), nType, nVersion);
+    Unserialize(is, boost::get<2>(item), nType, nVersion);
+    Unserialize(is, boost::get<3>(item), nType, nVersion);
+}
 
 /**
  * map
@@ -878,11 +952,17 @@ struct CSerActionUnserialize
     constexpr bool ForRead() const { return true; }
 };
 
+template<typename Stream, typename T>
+inline void SerReadWrite(Stream& s, const T& obj, CSerActionSerialize ser_action)
+{
+    ::Serialize(s, obj);
+}
 
-
-
-
-
+template<typename Stream, typename T>
+inline void SerReadWrite(Stream& s, T& obj, CSerActionUnserialize ser_action)
+{
+    ::Unserialize(s, obj);
+}
 
 
 /* ::GetSerializeSize implementations
@@ -935,11 +1015,17 @@ void SerializeMany(Stream& s)
 {
 }
 
-template<typename Stream, typename Arg, typename... Args>
-void SerializeMany(Stream& s, const Arg& arg, const Args&... args)
+template<typename Stream, typename Arg>
+void SerializeMany(Stream& s, Arg&& arg)
 {
-    ::Serialize(s, arg);
-    ::SerializeMany(s, args...);
+    ::Serialize(s, std::forward<Arg>(arg));
+}
+
+template<typename Stream, typename Arg, typename... Args>
+void SerializeMany(Stream& s, Arg&& arg, Args&&... args)
+{
+    ::Serialize(s, std::forward<Arg>(arg));
+    ::SerializeMany(s, std::forward<Args>(args)...);
 }
 
 template<typename Stream>
@@ -947,21 +1033,27 @@ inline void UnserializeMany(Stream& s)
 {
 }
 
+template<typename Stream, typename Arg>
+inline void UnserializeMany(Stream& s, Arg& arg)
+{
+    ::Unserialize(s, arg);
+}
+
 template<typename Stream, typename Arg, typename... Args>
-inline void UnserializeMany(Stream& s, Arg&& arg, Args&&... args)
+inline void UnserializeMany(Stream& s, Arg& arg, Args&... args)
 {
     ::Unserialize(s, arg);
     ::UnserializeMany(s, args...);
 }
 
 template<typename Stream, typename... Args>
-inline void SerReadWriteMany(Stream& s, CSerActionSerialize ser_action, const Args&... args)
+inline void SerReadWriteMany(Stream& s, CSerActionSerialize ser_action, Args&&... args)
 {
-    ::SerializeMany(s, args...);
+    ::SerializeMany(s, std::forward<Args>(args)...);
 }
 
 template<typename Stream, typename... Args>
-inline void SerReadWriteMany(Stream& s, CSerActionUnserialize ser_action, Args&&... args)
+inline void SerReadWriteMany(Stream& s, CSerActionUnserialize ser_action, Args&... args)
 {
     ::UnserializeMany(s, args...);
 }

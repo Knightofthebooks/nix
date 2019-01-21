@@ -1,8 +1,9 @@
+# Copyright (c) 2017-2018 The NIX Core developers
 # Copyright (c) 2013-2016 The Bitcoin Core developers
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-DIST_SUBDIRS = secp256k1 univalue
+DIST_SUBDIRS = secp256k1 univalue tor
 
 AM_LDFLAGS = $(PTHREAD_CFLAGS) $(LIBTOOL_LDFLAGS) $(HARDENED_LDFLAGS) $(GPROF_LDFLAGS) $(SANITIZER_LDFLAGS)
 AM_CXXFLAGS = $(DEBUG_CXXFLAGS) $(HARDENED_CXXFLAGS) $(WARN_CXXFLAGS) $(NOWARN_CXXFLAGS) $(ERROR_CXXFLAGS) $(GPROF_CXXFLAGS) $(SANITIZER_CXXFLAGS)
@@ -19,42 +20,72 @@ else
 LIBUNIVALUE = $(UNIVALUE_LIBS)
 endif
 
-BITCOIN_INCLUDES=-I$(builddir) $(BDB_CPPFLAGS) $(BOOST_CPPFLAGS) $(LEVELDB_CPPFLAGS) $(CRYPTO_CFLAGS) $(SSL_CFLAGS)
+TOR_LIBS = tor/src/or/libtor.a \
+	tor/src/common/libor.a \
+	tor/src/common/libor-ctime.a \
+	tor/src/common/libor-crypto.a \
+	tor/src/common/libor-event.a \
+	tor/src/trunnel/libor-trunnel.a \
+	tor/src/common/libcurve25519_donna.a \
+	tor/src/ext/ed25519/donna/libed25519_donna.a \
+	tor/src/ext/ed25519/ref10/libed25519_ref10.a \
+	tor/src/ext/keccak-tiny/libkeccak-tiny.a
 
-BITCOIN_INCLUDES += -I$(srcdir)/secp256k1/include
-BITCOIN_INCLUDES += $(UNIVALUE_CFLAGS)
+tor.timestamp: $(wildcard tor/src/or/*.c) $(wildcard tor/src/or/*.h) \
+		$(wildcard tor/src/common/*.c) $(wildcard tor/src/common/*.h) \
+		$(wildcard tor/src/trunnel/*.c) $(wildcard tor/src/trunnel/*.h) \
+		$(wildcard tor/src/ext/*.c) $(wildcard tor/src/ext/*.h)
+	@rm -f tor.timestamp.tmp
+	@touch tor.timestamp.tmp
+	$(AM_V_at)$(MAKE) $(AM_MAKEFLAGS) -C tor
+	@mv -f tor.timestamp.tmp tor.timestamp
 
-LIBBITCOIN_SERVER=libbitcoin_server.a
-LIBBITCOIN_COMMON=libbitcoin_common.a
-LIBBITCOIN_CONSENSUS=libbitcoin_consensus.a
-LIBBITCOIN_CLI=libbitcoin_cli.a
-LIBBITCOIN_UTIL=libbitcoin_util.a
-LIBBITCOIN_CRYPTO_BASE=crypto/libbitcoin_crypto_base.a
-LIBBITCOINQT=qt/libbitcoinqt.a
+$(TOR_LIBS): tor.timestamp
+	@if test -f $@; then :; else \
+		rm -f tor.timestamp; \
+		$(MAKE) $(AM_MAKEFLAGS) tor.timestamp; \
+	fi
+
+
+NIX_INCLUDES=-I$(builddir) $(BDB_CPPFLAGS) $(BOOST_CPPFLAGS) $(LEVELDB_CPPFLAGS) $(CRYPTO_CFLAGS) $(SSL_CFLAGS)
+
+NIX_INCLUDES += -I$(srcdir)/secp256k1/include
+NIX_INCLUDES += $(UNIVALUE_CFLAGS)
+
+LIBNIX_SERVER=libnix_server.a
+LIBNIX_COMMON=libnix_common.a
+LIBNIX_CONSENSUS=libnix_consensus.a
+LIBNIX_CLI=libnix_cli.a
+LIBNIX_UTIL=libnix_util.a
+LIBNIX_CRYPTO=crypto/libnix_crypto.a
+LIBNIXQT=qt/libnixqt.a
 LIBSECP256K1=secp256k1/libsecp256k1.la
 
 if ENABLE_ZMQ
-LIBBITCOIN_ZMQ=libbitcoin_zmq.a
+LIBNIX_ZMQ=libnix_zmq.a
 endif
-if BUILD_BITCOIN_LIBS
-LIBBITCOINCONSENSUS=libbitcoinconsensus.la
+if BUILD_NIX_LIBS
+LIBNIXCONSENSUS=libnixconsensus.la
 endif
 if ENABLE_WALLET
-LIBBITCOIN_WALLET=libbitcoin_wallet.a
+LIBNIX_WALLET=libnix_wallet.a
+endif
+if ENABLE_USBDEVICE
+LIBPARTICL_USBDEVICE=libnix_usbdevice.a
 endif
 
-LIBBITCOIN_CRYPTO= $(LIBBITCOIN_CRYPTO_BASE)
+LIBNIX_CRYPTO= $(LIBNIX_CRYPTO_BASE)
 if ENABLE_SSE41
-LIBBITCOIN_CRYPTO_SSE41 = crypto/libbitcoin_crypto_sse41.a
-LIBBITCOIN_CRYPTO += $(LIBBITCOIN_CRYPTO_SSE41)
+LIBNIX_CRYPTO_SSE41 = crypto/libnix_crypto_sse41.a
+LIBNIX_CRYPTO += $(LIBNIX_CRYPTO_SSE41)
 endif
 if ENABLE_AVX2
-LIBBITCOIN_CRYPTO_AVX2 = crypto/libbitcoin_crypto_avx2.a
-LIBBITCOIN_CRYPTO += $(LIBBITCOIN_CRYPTO_AVX2)
+LIBNIX_CRYPTO_AVX2 = crypto/libnix_crypto_avx2.a
+LIBNIX_CRYPTO += $(LIBNIX_CRYPTO_AVX2)
 endif
 if ENABLE_SHANI
-LIBBITCOIN_CRYPTO_SHANI = crypto/libbitcoin_crypto_shani.a
-LIBBITCOIN_CRYPTO += $(LIBBITCOIN_CRYPTO_SHANI)
+LIBNIX_CRYPTO_SHANI = crypto/libnix_crypto_shani.a
+LIBNIX_CRYPTO += $(LIBNIX_CRYPTO_SHANI)
 endif
 
 $(LIBSECP256K1): $(wildcard secp256k1/src/*.h) $(wildcard secp256k1/src/*.c) $(wildcard secp256k1/include/*)
@@ -63,37 +94,40 @@ $(LIBSECP256K1): $(wildcard secp256k1/src/*.h) $(wildcard secp256k1/src/*.c) $(w
 # Make is not made aware of per-object dependencies to avoid limiting building parallelization
 # But to build the less dependent modules first, we manually select their order here:
 EXTRA_LIBRARIES += \
-  $(LIBBITCOIN_CRYPTO) \
-  $(LIBBITCOIN_UTIL) \
-  $(LIBBITCOIN_COMMON) \
-  $(LIBBITCOIN_CONSENSUS) \
-  $(LIBBITCOIN_SERVER) \
-  $(LIBBITCOIN_CLI) \
-  $(LIBBITCOIN_WALLET) \
-  $(LIBBITCOIN_ZMQ)
+  $(LIBNIX_CRYPTO) \
+  $(LIBNIX_UTIL) \
+  $(LIBNIX_COMMON) \
+  $(LIBNIX_CONSENSUS) \
+  $(LIBNIX_SERVER) \
+  $(LIBNIX_CLI) \
+  $(LIBNIX_WALLET) \
+  $(LIBNIX_USBDEVICE) \
+  $(LIBNIX_ZMQ)
 
-lib_LTLIBRARIES = $(LIBBITCOINCONSENSUS)
+lib_LTLIBRARIES = $(LIBNIXCONSENSUS)
 
 bin_PROGRAMS =
 noinst_PROGRAMS =
 TESTS =
 BENCHMARKS =
 
-if BUILD_BITCOIND
-  bin_PROGRAMS += bitcoind
+if BUILD_NIXD
+  bin_PROGRAMS += nixd
 endif
 
 if BUILD_BITCOIN_CLI
-  bin_PROGRAMS += bitcoin-cli
+  bin_PROGRAMS += nix-cli
 endif
 if BUILD_BITCOIN_TX
-  bin_PROGRAMS += bitcoin-tx
+  bin_PROGRAMS += nix-tx
 endif
 
 .PHONY: FORCE check-symbols check-security
-# bitcoin core #
-BITCOIN_CORE_H = \
+# nix core #
+NIX_CORE_H = \
   addrdb.h \
+  addressindex.h \
+  spentindex.h \
   addrman.h \
   attributes.h \
   base58.h \
@@ -115,11 +149,24 @@ BITCOIN_CORE_H = \
   compat/sanity.h \
   compressor.h \
   consensus/consensus.h \
+  consensus/airdropaddresses.h \
   consensus/tx_verify.h \
   core_io.h \
   core_memusage.h \
+  pos/kernel.h \
+  pos/miner.h \
   cuckoocache.h \
   fs.h \
+  ghostnode/activeghostnode.h \
+  ghostnode/darksend.h \
+  ghostnode/darksend-relay.h \
+  ghostnode/ghostnode.h \
+  ghostnode/ghostnode-payments.h \
+  ghostnode/ghostnode-sync.h \
+  ghostnode/ghostnodeman.h \
+  ghostnode/ghostnodeconfig.h \
+  ghostnode/instantx.h \
+  ghostnode/netfulfilledman.h \
   httprpc.h \
   httpserver.h \
   index/base.h \
@@ -131,7 +178,6 @@ BITCOIN_CORE_H = \
   interfaces/node.h \
   interfaces/wallet.h \
   key.h \
-  key_io.h \
   keystore.h \
   dbwrapper.h \
   limitedmap.h \
@@ -160,16 +206,32 @@ BITCOIN_CORE_H = \
   rpc/mining.h \
   rpc/protocol.h \
   rpc/server.h \
-  rpc/rawtransaction.h \
   rpc/register.h \
   rpc/util.h \
   scheduler.h \
-  script/descriptor.h \
+	script/descriptor.h \
   script/ismine.h \
   script/sigcache.h \
   script/sign.h \
   script/standard.h \
   shutdown.h \
+  ghost-address/commitmentkey.h \
+  ghost-address/lz4.h \
+  ghost-address/extkey.h \
+  ghost-address/keystore.h \
+  ghost-address/keyutil.h \
+  ghost-address/mnemonic.h \
+  ghost-address/stealth.h \
+  ghost-address/types.h \
+  ghost-address/xxhash.h \
+  ghost-address/wordlists/chinese_simplified.h \
+  ghost-address/wordlists/chinese_traditional.h \
+  ghost-address/wordlists/english.h \
+  ghost-address/wordlists/french.h \
+  ghost-address/wordlists/japanese.h \
+  ghost-address/wordlists/spanish.h \
+  ghost-address/wordlists/italian.h \
+  ghost-address/wordlists/korean.h \
   streams.h \
   support/allocators/secure.h \
   support/allocators/zeroafterfree.h \
@@ -204,12 +266,14 @@ BITCOIN_CORE_H = \
   wallet/wallet.h \
   wallet/walletdb.h \
   wallet/walletutil.h \
-  wallet/coinselection.h \
   warnings.h \
+  zerocoin/zerocoin.h \
   zmq/zmqabstractnotifier.h \
   zmq/zmqconfig.h\
   zmq/zmqnotificationinterface.h \
-  zmq/zmqpublishnotifier.h \
+  usbdevice/usbdevice.h \
+  usbdevice/rpcusbdevice.h \
+	zmq/zmqpublishnotifier.h \
   zmq/zmqrpc.h
 
 
@@ -217,13 +281,14 @@ obj/build.h: FORCE
 	@$(MKDIR_P) $(builddir)/obj
 	@$(top_srcdir)/share/genbuild.sh "$(abs_top_builddir)/src/obj/build.h" \
 	  "$(abs_top_srcdir)"
-libbitcoin_util_a-clientversion.$(OBJEXT): obj/build.h
+libnix_util_a-clientversion.$(OBJEXT): obj/build.h
 
-# server: shared between bitcoind and bitcoin-qt
-libbitcoin_server_a_CPPFLAGS = $(AM_CPPFLAGS) $(BITCOIN_INCLUDES) $(MINIUPNPC_CPPFLAGS) $(EVENT_CFLAGS) $(EVENT_PTHREADS_CFLAGS)
-libbitcoin_server_a_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
-libbitcoin_server_a_SOURCES = \
+# server: shared between nixd and nix-qt
+libnix_server_a_CPPFLAGS = $(AM_CPPFLAGS) $(NIX_INCLUDES) $(MINIUPNPC_CPPFLAGS) $(EVENT_CFLAGS) $(EVENT_PTHREADS_CFLAGS)
+libnix_server_a_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
+libnix_server_a_SOURCES = \
   addrdb.cpp \
+  addressindex.cpp \
   addrman.cpp \
   bloom.cpp \
   blockencodings.cpp \
@@ -240,6 +305,8 @@ libbitcoin_server_a_SOURCES = \
   interfaces/node.cpp \
   init.cpp \
   dbwrapper.cpp \
+  ghostnode/rpcghostnode.cpp \
+  ghostnode/netfulfilledman.cpp \
   merkleblock.cpp \
   miner.cpp \
   net.cpp \
@@ -249,6 +316,7 @@ libbitcoin_server_a_SOURCES = \
   policy/fees.cpp \
   policy/policy.cpp \
   policy/rbf.cpp \
+  pos/kernel.cpp \
   pow.cpp \
   rest.cpp \
   rpc/blockchain.cpp \
@@ -256,6 +324,8 @@ libbitcoin_server_a_SOURCES = \
   rpc/misc.cpp \
   rpc/net.cpp \
   rpc/rawtransaction.cpp \
+  rpc/mnemonic.cpp \
+  rpc/safemode.cpp \
   rpc/server.cpp \
   rpc/util.cpp \
   script/sigcache.cpp \
@@ -268,30 +338,60 @@ libbitcoin_server_a_SOURCES = \
   validation.cpp \
   validationinterface.cpp \
   versionbits.cpp \
-  $(BITCOIN_CORE_H)
+  zerocoin/zerocoin.cpp \
+  $(NIX_CORE_H)
 
 if !ENABLE_WALLET
 libbitcoin_server_a_SOURCES += dummywallet.cpp
 endif
 
 if ENABLE_ZMQ
-libbitcoin_zmq_a_CPPFLAGS = $(BITCOIN_INCLUDES) $(ZMQ_CFLAGS)
-libbitcoin_zmq_a_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
-libbitcoin_zmq_a_SOURCES = \
+libnix_zmq_a_CPPFLAGS = $(NIX_INCLUDES) $(ZMQ_CFLAGS)
+libnix_zmq_a_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
+libnix_zmq_a_SOURCES = \
   zmq/zmqabstractnotifier.cpp \
   zmq/zmqnotificationinterface.cpp \
   zmq/zmqpublishnotifier.cpp \
   zmq/zmqrpc.cpp
 endif
 
+if ENABLE_USBDEVICE
+libnix_usbdevice_a_CPPFLAGS = $(NIX_INCLUDES) $(AM_CPPFLAGS)
+libnix_usbdevice_a_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
+libnix_usbdevice_a_CFLAGS = -DHAVE_HIDAPI $(AM_CFLAGS)
+libnix_usbdevice_a_SOURCES = \
+  usbdevice/ledger/btchipApdu.h \
+  usbdevice/ledger/ledgerLayer.h \
+  usbdevice/ledger/ledgerLayer.c \
+  usbdevice/ledger/dongleCommHidHidapi.h \
+  usbdevice/ledger/dongleCommHidHidapi.c \
+  usbdevice/usbdevice.cpp \
+  usbdevice/debugdevice.h \
+  usbdevice/debugdevice.cpp \
+  usbdevice/ledgerdevice.h \
+  usbdevice/ledgerdevice.cpp \
+  usbdevice/rpcusbdevice.cpp
+endif
 
-# wallet: shared between bitcoind and bitcoin-qt, but only linked
+
+# wallet: shared between nixd and nix-qt, but only linked
 # when wallet enabled
-libbitcoin_wallet_a_CPPFLAGS = $(AM_CPPFLAGS) $(BITCOIN_INCLUDES)
-libbitcoin_wallet_a_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
-libbitcoin_wallet_a_SOURCES = \
-  interfaces/wallet.cpp \
-  wallet/coincontrol.cpp \
+libnix_wallet_a_CPPFLAGS = $(AM_CPPFLAGS) $(NIX_INCLUDES)
+libnix_wallet_a_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
+libnix_wallet_a_SOURCES = \
+  ghostnode/activeghostnode.cpp \
+  ghostnode/darksend.cpp \
+  ghostnode/darksend-relay.cpp \
+  ghostnode/ghostnode.cpp \
+  ghostnode/ghostnode-payments.cpp \
+  ghostnode/ghostnode-sync.cpp \
+  ghostnode/ghostnodeman.cpp \
+  ghostnode/ghostnodeconfig.cpp \
+  ghostnode/instantx.cpp \
+  ghost-address/commitmentkey.cpp \
+  pos/miner.cpp \
+	interfaces/wallet.cpp \
+	wallet/coincontrol.cpp \
   wallet/crypter.cpp \
   wallet/db.cpp \
   wallet/feebumper.cpp \
@@ -302,13 +402,12 @@ libbitcoin_wallet_a_SOURCES = \
   wallet/wallet.cpp \
   wallet/walletdb.cpp \
   wallet/walletutil.cpp \
-  wallet/coinselection.cpp \
-  $(BITCOIN_CORE_H)
+  $(NIX_CORE_H)
 
 # crypto primitives library
-crypto_libbitcoin_crypto_base_a_CPPFLAGS = $(AM_CPPFLAGS)
-crypto_libbitcoin_crypto_base_a_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
-crypto_libbitcoin_crypto_base_a_SOURCES = \
+crypto_libnix_crypto_base_a_CPPFLAGS = $(AM_CPPFLAGS)
+crypto_libnix_crypto_base_a_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
+crypto_libnix_crypto_base_a_SOURCES = \
   crypto/aes.cpp \
   crypto/aes.h \
   crypto/chacha20.h \
@@ -326,35 +425,54 @@ crypto_libbitcoin_crypto_base_a_SOURCES = \
   crypto/sha256.h \
   crypto/sha512.cpp \
   crypto/sha512.h \
-  crypto/siphash.cpp \
-  crypto/siphash.h
+  crypto/Lyra2RE/Lyra2RE.c \
+  crypto/Lyra2RE/Lyra2RE.h \
+  crypto/Lyra2RE/Lyra2.c \
+  crypto/Lyra2RE/Lyra2.h \
+  crypto/Lyra2RE/Sponge.c \
+  crypto/Lyra2RE/Sponge.h \
+  crypto/Lyra2RE/blake.c \
+  crypto/Lyra2RE/groestl.c \
+  crypto/Lyra2RE/keccak.c \
+  crypto/Lyra2RE/skein.c \
+  crypto/Lyra2RE/cubehash.c \
+  crypto/Lyra2RE/bmw.c \
+  crypto/Lyra2RE/sph_blake.h \
+  crypto/Lyra2RE/sph_bmw.h \
+  crypto/Lyra2RE/sph_cubehash.h \
+  crypto/Lyra2RE/sph_groestl.h \
+  crypto/Lyra2RE/sph_keccak.h \
+  crypto/Lyra2RE/sph_skein.h \
+  crypto/Lyra2RE/sph_types.h \
+	crypto/siphash.cpp \
+	crypto/siphash.h
 
 if USE_ASM
-crypto_libbitcoin_crypto_base_a_SOURCES += crypto/sha256_sse4.cpp
+crypto_libnix_crypto_base_a_SOURCES += crypto/sha256_sse4.cpp
 endif
 
-crypto_libbitcoin_crypto_sse41_a_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
-crypto_libbitcoin_crypto_sse41_a_CPPFLAGS = $(AM_CPPFLAGS)
-crypto_libbitcoin_crypto_sse41_a_CXXFLAGS += $(SSE41_CXXFLAGS)
-crypto_libbitcoin_crypto_sse41_a_CPPFLAGS += -DENABLE_SSE41
-crypto_libbitcoin_crypto_sse41_a_SOURCES = crypto/sha256_sse41.cpp
+crypto_libnix_crypto_sse41_a_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
+crypto_libnix_crypto_sse41_a_CPPFLAGS = $(AM_CPPFLAGS)
+crypto_libnix_crypto_sse41_a_CXXFLAGS += $(SSE41_CXXFLAGS)
+crypto_libnix_crypto_sse41_a_CPPFLAGS += -DENABLE_SSE41
+crypto_libnix_crypto_sse41_a_SOURCES = crypto/sha256_sse41.cpp
 
-crypto_libbitcoin_crypto_avx2_a_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
-crypto_libbitcoin_crypto_avx2_a_CPPFLAGS = $(AM_CPPFLAGS)
-crypto_libbitcoin_crypto_avx2_a_CXXFLAGS += $(AVX2_CXXFLAGS)
-crypto_libbitcoin_crypto_avx2_a_CPPFLAGS += -DENABLE_AVX2
-crypto_libbitcoin_crypto_avx2_a_SOURCES = crypto/sha256_avx2.cpp
+crypto_libnix_crypto_avx2_a_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
+crypto_libnix_crypto_avx2_a_CPPFLAGS = $(AM_CPPFLAGS)
+crypto_libnix_crypto_avx2_a_CXXFLAGS += $(AVX2_CXXFLAGS)
+crypto_libnix_crypto_avx2_a_CPPFLAGS += -DENABLE_AVX2
+crypto_libnix_crypto_avx2_a_SOURCES = crypto/sha256_avx2.cpp
 
-crypto_libbitcoin_crypto_shani_a_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
-crypto_libbitcoin_crypto_shani_a_CPPFLAGS = $(AM_CPPFLAGS)
-crypto_libbitcoin_crypto_shani_a_CXXFLAGS += $(SHANI_CXXFLAGS)
-crypto_libbitcoin_crypto_shani_a_CPPFLAGS += -DENABLE_SHANI
-crypto_libbitcoin_crypto_shani_a_SOURCES = crypto/sha256_shani.cpp
+crypto_libnix_crypto_shani_a_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
+crypto_libnix_crypto_shani_a_CPPFLAGS = $(AM_CPPFLAGS)
+crypto_libnix_crypto_shani_a_CXXFLAGS += $(SHANI_CXXFLAGS)
+crypto_libnix_crypto_shani_a_CPPFLAGS += -DENABLE_SHANI
+crypto_libnix_crypto_shani_a_SOURCES = crypto/sha256_shani.cpp
 
 # consensus: shared between all executables that validate any consensus rules.
-libbitcoin_consensus_a_CPPFLAGS = $(AM_CPPFLAGS) $(BITCOIN_INCLUDES)
-libbitcoin_consensus_a_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
-libbitcoin_consensus_a_SOURCES = \
+libnix_consensus_a_CPPFLAGS = $(AM_CPPFLAGS) $(NIX_INCLUDES)
+libnix_consensus_a_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
+libnix_consensus_a_SOURCES = \
   amount.h \
   arith_uint256.cpp \
   arith_uint256.h \
@@ -362,6 +480,8 @@ libbitcoin_consensus_a_SOURCES = \
   consensus/merkle.h \
   consensus/params.h \
   consensus/validation.h \
+  ghostnode/flat-database.h \
+  ghostnode/spork.h \
   hash.cpp \
   hash.h \
   prevector.h \
@@ -371,7 +491,7 @@ libbitcoin_consensus_a_SOURCES = \
   primitives/transaction.h \
   pubkey.cpp \
   pubkey.h \
-  script/bitcoinconsensus.cpp \
+  script/nixconsensus.cpp \
   script/interpreter.cpp \
   script/interpreter.h \
   script/script.cpp \
@@ -387,10 +507,10 @@ libbitcoin_consensus_a_SOURCES = \
   util/strencodings.h \
   version.h
 
-# common: shared between bitcoind, and bitcoin-qt and non-server tools
-libbitcoin_common_a_CPPFLAGS = $(AM_CPPFLAGS) $(BITCOIN_INCLUDES)
-libbitcoin_common_a_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
-libbitcoin_common_a_SOURCES = \
+# common: shared between nixd, and nix-qt and non-server tools
+libnix_common_a_CPPFLAGS = $(AM_CPPFLAGS) $(NIX_INCLUDES)
+libnix_common_a_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
+libnix_common_a_SOURCES = \
   base58.cpp \
   bech32.cpp \
   chainparams.cpp \
@@ -398,8 +518,8 @@ libbitcoin_common_a_SOURCES = \
   compressor.cpp \
   core_read.cpp \
   core_write.cpp \
+  ghostnode/spork.cpp \
   key.cpp \
-  key_io.cpp \
   keystore.cpp \
   netaddress.cpp \
   netbase.cpp \
@@ -410,22 +530,53 @@ libbitcoin_common_a_SOURCES = \
   script/ismine.cpp \
   script/sign.cpp \
   script/standard.cpp \
-  versionbitsinfo.cpp \
+  unilib/uninorms.cpp \
+  unilib/utf8.cpp \
+  ghost-address/lz4.c \
+  ghost-address/extkey.cpp \
+  ghost-address/keystore.cpp \
+  ghost-address/keyutil.cpp \
+  ghost-address/mnemonic.cpp \
+  ghost-address/stealth.cpp \
+  ghost-address/xxhash.c \
+	versionbitsinfo.cpp \
   warnings.cpp \
-  $(BITCOIN_CORE_H)
+  $(NIX_CORE_H)
 
 # util: shared between all executables.
 # This library *must* be included to make sure that the glibc
 # backward-compatibility objects and their sanity checks are linked.
-libbitcoin_util_a_CPPFLAGS = $(AM_CPPFLAGS) $(BITCOIN_INCLUDES)
-libbitcoin_util_a_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
-libbitcoin_util_a_SOURCES = \
+libnix_util_a_CPPFLAGS = $(AM_CPPFLAGS) $(NIX_INCLUDES)
+libnix_util_a_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
+libnix_util_a_SOURCES = \
   support/lockedpool.cpp \
   chainparamsbase.cpp \
   clientversion.cpp \
   compat/glibc_sanity.cpp \
   compat/glibcxx_sanity.cpp \
   compat/strnlen.cpp \
+  libzerocoin/bignum.h \
+  libzerocoin/Accumulator.h \
+  libzerocoin/Accumulator.cpp \
+  libzerocoin/AccumulatorProofOfKnowledge.h \
+  libzerocoin/AccumulatorProofOfKnowledge.cpp \
+  libzerocoin/Coin.h \
+  libzerocoin/Coin.cpp \
+  libzerocoin/CoinSpend.h \
+  libzerocoin/CoinSpend.cpp \
+  libzerocoin/Commitment.h \
+  libzerocoin/Commitment.cpp \
+  libzerocoin/ParallelTasks.h \
+  libzerocoin/ParallelTasks.cpp \
+  libzerocoin/ParamGeneration.h \
+  libzerocoin/ParamGeneration.cpp \
+  libzerocoin/Params.h \
+  libzerocoin/Params.cpp \
+  libzerocoin/SerialNumberSignatureOfKnowledge.h \
+  libzerocoin/SerialNumberSignatureOfKnowledge.cpp \
+  libzerocoin/SpendMetaData.h \
+  libzerocoin/SpendMetaData.cpp \
+  libzerocoin/Zerocoin.h \
   fs.cpp \
   logging.cpp \
   random.cpp \
@@ -438,103 +589,105 @@ libbitcoin_util_a_SOURCES = \
   util/moneystr.cpp \
   util/strencodings.cpp \
   util/time.cpp \
-  $(BITCOIN_CORE_H)
+  $(NIX_CORE_H)
 
 if GLIBC_BACK_COMPAT
-libbitcoin_util_a_SOURCES += compat/glibc_compat.cpp
+libnix_util_a_SOURCES += compat/glibc_compat.cpp
 AM_LDFLAGS += $(COMPAT_LDFLAGS)
 endif
 
-# cli: shared between bitcoin-cli and bitcoin-qt
-libbitcoin_cli_a_CPPFLAGS = $(AM_CPPFLAGS) $(BITCOIN_INCLUDES)
-libbitcoin_cli_a_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
-libbitcoin_cli_a_SOURCES = \
+# cli: shared between nix-cli and nix-qt
+libnix_cli_a_CPPFLAGS = $(AM_CPPFLAGS) $(NIX_INCLUDES)
+libnix_cli_a_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
+libnix_cli_a_SOURCES = \
   rpc/client.cpp \
-  $(BITCOIN_CORE_H)
+  $(NIX_CORE_H)
 
-nodist_libbitcoin_util_a_SOURCES = $(srcdir)/obj/build.h
+nodist_libnix_util_a_SOURCES = $(srcdir)/obj/build.h
 #
 
-# bitcoind binary #
-bitcoind_SOURCES = bitcoind.cpp
-bitcoind_CPPFLAGS = $(AM_CPPFLAGS) $(BITCOIN_INCLUDES)
-bitcoind_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
-bitcoind_LDFLAGS = $(RELDFLAGS) $(AM_LDFLAGS) $(LIBTOOL_APP_LDFLAGS)
+# nixd binary #
+nixd_SOURCES = nixd.cpp
+nixd_CPPFLAGS = $(AM_CPPFLAGS) $(NIX_INCLUDES)
+nixd_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
+nixd_LDFLAGS = $(RELDFLAGS) $(AM_LDFLAGS) $(LIBTOOL_APP_LDFLAGS)
 
 if TARGET_WINDOWS
-bitcoind_SOURCES += bitcoind-res.rc
+nixd_SOURCES += nixd-res.rc
 endif
 
-bitcoind_LDADD = \
-  $(LIBBITCOIN_SERVER) \
-  $(LIBBITCOIN_WALLET) \
-  $(LIBBITCOIN_SERVER) \
-  $(LIBBITCOIN_COMMON) \
+nixd_LDADD = \
+  $(LIBNIX_SERVER) \
+  $(LIBNIX_WALLET) \
+  $(LIBNIX_SERVER) \
+  $(LIBNIX_COMMON) \
   $(LIBUNIVALUE) \
-  $(LIBBITCOIN_UTIL) \
-  $(LIBBITCOIN_ZMQ) \
-  $(LIBBITCOIN_CONSENSUS) \
-  $(LIBBITCOIN_CRYPTO) \
+  $(LIBNIX_UTIL) \
+  $(LIBNIX_WALLET) \
+  $(LIBNIX_ZMQ) \
+  $(LIBNIX_CONSENSUS) \
+  $(LIBNIX_CRYPTO) \
   $(LIBLEVELDB) \
   $(LIBLEVELDB_SSE42) \
   $(LIBMEMENV) \
-  $(LIBSECP256K1)
+  $(LIBSECP256K1) \
+  $(LIBNIX_USBDEVICE)
 
-bitcoind_LDADD += $(BOOST_LIBS) $(BDB_LIBS) $(CRYPTO_LIBS) $(MINIUPNPC_LIBS) $(EVENT_PTHREADS_LIBS) $(EVENT_LIBS) $(ZMQ_LIBS)
+nixd_LDADD += $(TOR_LIBS) $(BOOST_LIBS) $(BDB_LIBS) $(SSL_LIBS) $(CRYPTO_LIBS) $(MINIUPNPC_LIBS) $(EVENT_PTHREADS_LIBS) $(EVENT_LIBS) $(ZMQ_LIBS) $(USB_LIBS) -lz
 
-# bitcoin-cli binary #
-bitcoin_cli_SOURCES = bitcoin-cli.cpp
-bitcoin_cli_CPPFLAGS = $(AM_CPPFLAGS) $(BITCOIN_INCLUDES) $(EVENT_CFLAGS)
-bitcoin_cli_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
-bitcoin_cli_LDFLAGS = $(RELDFLAGS) $(AM_LDFLAGS) $(LIBTOOL_APP_LDFLAGS)
-
-if TARGET_WINDOWS
-bitcoin_cli_SOURCES += bitcoin-cli-res.rc
-endif
-
-bitcoin_cli_LDADD = \
-  $(LIBBITCOIN_CLI) \
-  $(LIBUNIVALUE) \
-  $(LIBBITCOIN_UTIL) \
-  $(LIBBITCOIN_CRYPTO)
-
-bitcoin_cli_LDADD += $(BOOST_LIBS) $(CRYPTO_LIBS) $(EVENT_LIBS)
-#
-
-# bitcoin-tx binary #
-bitcoin_tx_SOURCES = bitcoin-tx.cpp
-bitcoin_tx_CPPFLAGS = $(AM_CPPFLAGS) $(BITCOIN_INCLUDES)
-bitcoin_tx_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
-bitcoin_tx_LDFLAGS = $(RELDFLAGS) $(AM_LDFLAGS) $(LIBTOOL_APP_LDFLAGS)
+# nix-cli binary #
+nix_cli_SOURCES = nix-cli.cpp
+nix_cli_CPPFLAGS = $(AM_CPPFLAGS) $(NIX_INCLUDES) $(EVENT_CFLAGS)
+nix_cli_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
+nix_cli_LDFLAGS = $(RELDFLAGS) $(AM_LDFLAGS) $(LIBTOOL_APP_LDFLAGS)
 
 if TARGET_WINDOWS
-bitcoin_tx_SOURCES += bitcoin-tx-res.rc
+nix_cli_SOURCES += nix-cli-res.rc
 endif
 
-bitcoin_tx_LDADD = \
+nix_cli_LDADD = \
+  $(LIBNIX_CLI) \
   $(LIBUNIVALUE) \
-  $(LIBBITCOIN_COMMON) \
-  $(LIBBITCOIN_UTIL) \
-  $(LIBBITCOIN_CONSENSUS) \
-  $(LIBBITCOIN_CRYPTO) \
-  $(LIBSECP256K1)
+  $(LIBNIX_UTIL) \
+  $(LIBNIX_CRYPTO)
 
-bitcoin_tx_LDADD += $(BOOST_LIBS) $(CRYPTO_LIBS)
+nix_cli_LDADD += $(BOOST_LIBS) $(SSL_LIBS) $(CRYPTO_LIBS) $(EVENT_LIBS)
 #
 
-# bitcoinconsensus library #
-if BUILD_BITCOIN_LIBS
-include_HEADERS = script/bitcoinconsensus.h
-libbitcoinconsensus_la_SOURCES = $(crypto_libbitcoin_crypto_base_a_SOURCES) $(libbitcoin_consensus_a_SOURCES)
+# nix-tx binary #
+nix_tx_SOURCES = nix-tx.cpp
+nix_tx_CPPFLAGS = $(AM_CPPFLAGS) $(NIX_INCLUDES)
+nix_tx_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
+nix_tx_LDFLAGS = $(RELDFLAGS) $(AM_LDFLAGS) $(LIBTOOL_APP_LDFLAGS)
+
+if TARGET_WINDOWS
+nix_tx_SOURCES += nix-tx-res.rc
+endif
+
+nix_tx_LDADD = \
+  $(LIBUNIVALUE) \
+  $(LIBNIX_COMMON) \
+  $(LIBNIX_UTIL) \
+  $(LIBNIX_CONSENSUS) \
+  $(LIBNIX_CRYPTO) \
+  $(LIBSECP256K1)
+
+nix_tx_LDADD += $(BOOST_LIBS) $(CRYPTO_LIBS)
+#
+
+# nixconsensus library #
+if BUILD_NIX_LIBS
+include_HEADERS = script/nixconsensus.h
+libnixconsensus_la_SOURCES = $(crypto_libnix_crypto_base_a_SOURCES) $(libnix_consensus_a_SOURCES)
 
 if GLIBC_BACK_COMPAT
-  libbitcoinconsensus_la_SOURCES += compat/glibc_compat.cpp
+  libnixconsensus_la_SOURCES += compat/glibc_compat.cpp
 endif
 
-libbitcoinconsensus_la_LDFLAGS = $(AM_LDFLAGS) -no-undefined $(RELDFLAGS)
-libbitcoinconsensus_la_LIBADD = $(LIBSECP256K1)
-libbitcoinconsensus_la_CPPFLAGS = $(AM_CPPFLAGS) -I$(builddir)/obj -I$(srcdir)/secp256k1/include -DBUILD_BITCOIN_INTERNAL
-libbitcoinconsensus_la_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
+libnixconsensus_la_LDFLAGS = $(AM_LDFLAGS) -no-undefined $(RELDFLAGS)
+libnixconsensus_la_LIBADD = $(LIBSECP256K1)
+libnixconsensus_la_CPPFLAGS = $(AM_CPPFLAGS) -I$(builddir)/obj -I$(srcdir)/secp256k1/include -DBUILD_NIX_INTERNAL
+libnixconsensus_la_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
 
 endif
 #
@@ -560,20 +713,22 @@ CLEANFILES += wallet/*.gcda wallet/*.gcno
 CLEANFILES += wallet/test/*.gcda wallet/test/*.gcno
 CLEANFILES += zmq/*.gcda zmq/*.gcno
 CLEANFILES += obj/build.h
+CLEANFILES += tor.timestamp tor.timestamp.tmp
 
 EXTRA_DIST = $(CTAES_DIST)
 
 
-config/bitcoin-config.h: config/stamp-h1
+config/nix-config.h: config/stamp-h1
 	@$(MAKE) -C $(top_builddir) $(subdir)/$(@)
-config/stamp-h1: $(top_srcdir)/$(subdir)/config/bitcoin-config.h.in $(top_builddir)/config.status
+config/stamp-h1: $(top_srcdir)/$(subdir)/config/nix-config.h.in $(top_builddir)/config.status
 	$(AM_V_at)$(MAKE) -C $(top_builddir) $(subdir)/$(@)
-$(top_srcdir)/$(subdir)/config/bitcoin-config.h.in:  $(am__configure_deps)
-	$(AM_V_at)$(MAKE) -C $(top_srcdir) $(subdir)/config/bitcoin-config.h.in
+$(top_srcdir)/$(subdir)/config/nix-config.h.in:  $(am__configure_deps)
+	$(AM_V_at)$(MAKE) -C $(top_srcdir) $(subdir)/config/nix-config.h.in
 
 clean-local:
 	-$(MAKE) -C secp256k1 clean
 	-$(MAKE) -C univalue clean
+	-$(MAKE) -C tor clean
 	-rm -f leveldb/*/*.gcda leveldb/*/*.gcno leveldb/helpers/memenv/*.gcda leveldb/helpers/memenv/*.gcno
 	-rm -f config.h
 	-rm -rf test/__pycache__

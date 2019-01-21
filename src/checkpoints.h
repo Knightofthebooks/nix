@@ -19,8 +19,10 @@ struct CCheckpointData;
 namespace Checkpoints
 {
 
-//! Returns last CBlockIndex* that is a checkpoint
+//! Returns last CBlockIndex* in mapBlockIndex that is a checkpoint
 CBlockIndex* GetLastCheckpoint(const CCheckpointData& data);
+//! Return conservative estimate of total number of blocks, 0 if unknown
+int GetTotalBlocksEstimate(const CCheckpointData& data);
 
 } //namespace Checkpoints
 

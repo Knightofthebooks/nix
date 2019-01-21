@@ -6,7 +6,7 @@
 
 * Verify that getdata requests for old blocks (>1week) are dropped
 if uploadtarget has been reached.
-* Verify that getdata requests for recent blocks are respected even
+* Verify that getdata requests for recent blocks are respecteved even
 if uploadtarget has been reached.
 * Verify that the upload counters are reset after 24 hours.
 """
@@ -18,7 +18,7 @@ from test_framework.mininode import P2PInterface
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import assert_equal, mine_large_block
 
-class TestP2PConn(P2PInterface):
+class TestNode(P2PInterface):
     def __init__(self):
         super().__init__()
         self.block_receive_map = defaultdict(int)
@@ -35,7 +35,7 @@ class MaxUploadTest(BitcoinTestFramework):
     def set_test_params(self):
         self.setup_clean_chain = True
         self.num_nodes = 1
-        self.extra_args = [["-maxuploadtarget=800"]]
+        self.extra_args = [["-maxuploadtarget=800", "-blockmaxsize=999000"]]
 
         # Cache for utxos, as the listunspent may take a long time later in the test
         self.utxo_cache = []
@@ -59,7 +59,7 @@ class MaxUploadTest(BitcoinTestFramework):
         p2p_conns = []
 
         for _ in range(3):
-            p2p_conns.append(self.nodes[0].add_p2p_connection(TestP2PConn()))
+            p2p_conns.append(self.nodes[0].add_p2p_connection(TestNode()))
 
         # Now mine a big block
         mine_large_block(self.nodes[0], self.utxo_cache)
@@ -142,10 +142,10 @@ class MaxUploadTest(BitcoinTestFramework):
         #stop and start node 0 with 1MB maxuploadtarget, whitelist 127.0.0.1
         self.log.info("Restarting nodes with -whitelist=127.0.0.1")
         self.stop_node(0)
-        self.start_node(0, ["-whitelist=127.0.0.1", "-maxuploadtarget=1"])
+        self.start_node(0, ["-whitelist=127.0.0.1", "-maxuploadtarget=1", "-blockmaxsize=999000"])
 
         # Reconnect to self.nodes[0]
-        self.nodes[0].add_p2p_connection(TestP2PConn())
+        self.nodes[0].add_p2p_connection(TestNode())
 
         #retrieve 20 blocks which should be enough to break the 1MB limit
         getdata_request.inv = [CInv(2, big_new_block)]

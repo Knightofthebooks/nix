@@ -66,6 +66,9 @@ class AcceptBlockTest(BitcoinTestFramework):
         self.num_nodes = 2
         self.extra_args = [[], ["-minimumchainwork=0x10"]]
 
+    def skip_test_if_missing_module(self):
+        self.skip_if_no_wallet()
+
     def setup_network(self):
         # Node0 will be used to test behavior of processing unrequested blocks
         # from peers which are not whitelisted, while Node1 will be used for
@@ -158,7 +161,7 @@ class AcceptBlockTest(BitcoinTestFramework):
         self.log.info("Unrequested more-work block accepted")
 
         # 4c. Now mine 288 more blocks and deliver; all should be processed but
-        # the last (height-too-high) on node (as long as it is not missing any headers)
+        # the last (height-too-high) on node (as long as its not missing any headers)
         tip = block_h3
         all_blocks = []
         for i in range(288):
